@@ -1,0 +1,82 @@
+@startuml
+title 主要データモデル
+
+entity "JobFlows" as JobFlows {
+  * Id : int
+  --
+  Name : nvarchar(100)
+  Description : nvarchar(500)
+  IsEnabled : bit
+  ScheduleEnabled : bit
+  ScheduleType : int
+  ScheduledStartAt : datetimeoffset
+  NextRunAt : datetimeoffset
+  LastScheduledRunQueuedAt : datetimeoffset
+  CreatedAt : datetimeoffset
+  UpdatedAt : datetimeoffset
+}
+
+entity "JobDefinitions" as JobDefinitions {
+  * Id : int
+  --
+  Name : nvarchar(100)
+  Description : nvarchar(500)
+  Command : nvarchar(500)
+  Arguments : nvarchar(1000)
+  WorkingDirectory : nvarchar(500)
+  SuccessExitCode : int
+  TimeoutSeconds : int
+  IsEnabled : bit
+  CreatedAt : datetimeoffset
+  UpdatedAt : datetimeoffset
+}
+
+entity "JobNodes" as JobNodes {
+  * Id : uniqueidentifier
+  --
+  JobFlowId : int
+  JobDefinitionId : int
+  Name : nvarchar(100)
+  DisplayOrder : int
+  RunNextOnSuccess : bit
+  StopOnFailure : bit
+  CreatedAt : datetimeoffset
+  UpdatedAt : datetimeoffset
+}
+
+entity "FlowRuns" as FlowRuns {
+  * Id : int
+  --
+  JobFlowId : int
+  RequestedByUserId : nvarchar(450)
+  RequestedAt : datetimeoffset
+  StartedAt : datetimeoffset
+  CompletedAt : datetimeoffset
+  Status : int
+  Message : nvarchar(1000)
+  CreatedAt : datetimeoffset
+  UpdatedAt : datetimeoffset
+}
+
+entity "JobRuns" as JobRuns {
+  * Id : int
+  --
+  FlowRunId : int
+  JobNodeId : uniqueidentifier
+  StartedAt : datetimeoffset
+  CompletedAt : datetimeoffset
+  Status : int
+  ExitCode : int
+  Output : nvarchar(max)
+  ErrorOutput : nvarchar(max)
+  CreatedAt : datetimeoffset
+  UpdatedAt : datetimeoffset
+}
+
+JobFlows ||--o{ JobNodes
+JobDefinitions ||--o{ JobNodes
+JobFlows ||--o{ FlowRuns
+FlowRuns ||--o{ JobRuns
+JobNodes ||--o{ JobRuns
+
+@enduml

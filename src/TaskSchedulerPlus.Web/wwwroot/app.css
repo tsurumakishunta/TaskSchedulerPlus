@@ -1,0 +1,406 @@
+/* アプリ全体で共有する基本スタイルです。Bootstrap の上に業務画面向けの調整を重ねます。 */
+html, body {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+a, .btn-link {
+    color: #006bb7;
+}
+
+.btn-primary {
+    color: #fff;
+    background-color: #1b6ec2;
+    border-color: #1861ac;
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
+  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+}
+
+.content {
+    padding-top: 1.1rem;
+}
+
+h1:focus {
+    outline: none;
+}
+
+.valid.modified:not([type=checkbox]) {
+    outline: 1px solid #26b050;
+}
+
+.invalid {
+    outline: 1px solid #e50000;
+}
+
+.validation-message {
+    color: #e50000;
+}
+
+.blazor-error-boundary {
+    /* Blazor の未処理エラー表示を日本語の見え方に合わせます。 */
+    background: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTYiIGhlaWdodD0iNDkiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIG92ZXJmbG93PSJoaWRkZW4iPjxkZWZzPjxjbGlwUGF0aCBpZD0iY2xpcDAiPjxyZWN0IHg9IjIzNSIgeT0iNTEiIHdpZHRoPSI1NiIgaGVpZ2h0PSI0OSIvPjwvY2xpcFBhdGg+PC9kZWZzPjxnIGNsaXAtcGF0aD0idXJsKCNjbGlwMCkiIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0yMzUgLTUxKSI+PHBhdGggZD0iTTI2My41MDYgNTFDMjY0LjcxNyA1MSAyNjUuODEzIDUxLjQ4MzcgMjY2LjYwNiA1Mi4yNjU4TDI2Ny4wNTIgNTIuNzk4NyAyNjcuNTM5IDUzLjYyODMgMjkwLjE4NSA5Mi4xODMxIDI5MC41NDUgOTIuNzk1IDI5MC42NTYgOTIuOTk2QzI5MC44NzcgOTMuNTEzIDI5MSA5NC4wODE1IDI5MSA5NC42NzgyIDI5MSA5Ny4wNjUxIDI4OS4wMzggOTkgMjg2LjYxNyA5OUwyNDAuMzgzIDk5QzIzNy45NjMgOTkgMjM2IDk3LjA2NTEgMjM2IDk0LjY3ODIgMjM2IDk0LjM3OTkgMjM2LjAzMSA5NC4wODg2IDIzNi4wODkgOTMuODA3MkwyMzYuMzM4IDkzLjAxNjIgMjM2Ljg1OCA5Mi4xMzE0IDI1OS40NzMgNTMuNjI5NCAyNTkuOTYxIDUyLjc5ODUgMjYwLjQwNyA1Mi4yNjU4QzI2MS4yIDUxLjQ4MzcgMjYyLjI5NiA1MSAyNjMuNTA2IDUxWk0yNjMuNTg2IDY2LjAxODNDMjYwLjczNyA2Ni4wMTgzIDI1OS4zMTMgNjcuMTI0NSAyNTkuMzEzIDY5LjMzNyAyNTkuMzEzIDY5LjYxMDIgMjU5LjMzMiA2OS44NjA4IDI1OS4zNzEgNzAuMDg4N0wyNjEuNzk1IDg0LjAxNjEgMjY1LjM4IDg0LjAxNjEgMjY3LjgyMSA2OS43NDc1QzI2Ny44NiA2OS43MzA5IDI2Ny44NzkgNjkuNTg3NyAyNjcuODc5IDY5LjMxNzkgMjY3Ljg3OSA2Ny4xMTgyIDI2Ni40NDggNjYuMDE4MyAyNjMuNTg2IDY2LjAxODNaTTI2My41NzYgODYuMDU0N0MyNjEuMDQ5IDg2LjA1NDcgMjU5Ljc4NiA4Ny4zMDA1IDI1OS43ODYgODkuNzkyMSAyNTkuNzg2IDkyLjI4MzcgMjYxLjA0OSA5My41Mjk1IDI2My41NzYgOTMuNTI5NSAyNjYuMTE2IDkzLjUyOTUgMjY3LjM4NyA5Mi4yODM3IDI2Ny4zODcgODkuNzkyMSAyNjcuMzg3IDg3LjMwMDUgMjY2LjExNiA4Ni4wNTQ3IDI2My41NzYgODYuMDU0N1oiIGZpbGw9IiNGRkU1MDAiIGZpbGwtcnVsZT0iZXZlbm9kZCIvPjwvZz48L3N2Zz4=) no-repeat 1rem/1.8rem, #b32121;
+    padding: 1rem 1rem 1rem 3.7rem;
+    color: white;
+}
+
+.blazor-error-boundary::after {
+    content: "エラーが発生しました。"
+}
+
+.parameter-json {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.settings-page {
+    /* システム設定画面はカードを使わず、設定セクションの積み上げで表現します。 */
+    max-width: 1080px;
+}
+
+.settings-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.settings-section {
+    border-top: 1px solid #dde6ee;
+    padding: 1.5rem 0;
+}
+
+.settings-section-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+}
+
+.settings-section-heading h2 {
+    font-size: 1.25rem;
+    margin-bottom: .25rem;
+}
+
+.settings-section-heading p {
+    color: #6c757d;
+    margin-bottom: 0;
+}
+
+.settings-eyebrow {
+    color: #6c757d;
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    margin-bottom: .25rem;
+}
+
+.settings-list {
+    display: grid;
+    grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+    margin-bottom: 1rem;
+    border-top: 1px solid #edf2f7;
+}
+
+.settings-list dt,
+.settings-list dd {
+    border-bottom: 1px solid #edf2f7;
+    padding: .75rem 0;
+}
+
+.settings-list dt {
+    color: #495057;
+    font-weight: 600;
+}
+
+.settings-list dd {
+    margin-bottom: 0;
+    min-width: 0;
+}
+
+.settings-list code {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.settings-code {
+    display: block;
+}
+
+.settings-secret-row {
+    display: flex;
+    align-items: flex-start;
+    gap: .5rem;
+}
+
+.settings-secret-row .settings-code {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.settings-secret-row .btn {
+    flex: 0 0 auto;
+}
+
+.settings-json {
+    border: 1px solid #dde6ee;
+    border-radius: .5rem;
+    background: #f8fafc;
+}
+
+.settings-json summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: .75rem 1rem;
+}
+
+.settings-json pre {
+    border-top: 1px solid #dde6ee;
+    margin: 0;
+    padding: 1rem;
+}
+
+@media (max-width: 767.98px) {
+    .settings-section-heading,
+    .settings-title {
+        display: block;
+    }
+
+    .settings-list {
+        display: block;
+    }
+
+    .settings-list dt {
+        border-bottom: 0;
+        padding-bottom: .25rem;
+    }
+
+    .settings-list dd {
+        padding-top: 0;
+    }
+}
+
+.darker-border-checkbox.form-check-input {
+    border-color: #929292;
+}
+
+.summary-card {
+    background: #f5f8fb;
+    border: 1px solid #dde6ee;
+    border-radius: .5rem;
+    padding: 1rem 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.summary-card strong {
+    font-size: 2rem;
+}
+
+.run-details pre {
+    max-width: 38rem;
+    max-height: 14rem;
+    overflow: auto;
+    padding: .5rem;
+    margin-top: .4rem;
+    background: #f5f5f5;
+    white-space: pre-wrap;
+}
+
+.workflow-actions {
+    white-space: nowrap;
+}
+
+.workflow-actions .btn {
+    margin: .1rem;
+}
+
+.workflow-subnav {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+}
+
+.workflow-subnav a,
+.workflow-subnav span {
+    border: 1px solid #dde6ee;
+    border-radius: 999px;
+    padding: .35rem .75rem;
+    text-decoration: none;
+}
+
+.workflow-subnav span {
+    background: #1b6ec2;
+    border-color: #1b6ec2;
+    color: #fff;
+}
+
+.gantt-shell {
+    /* 1日分の実行履歴を横スクロール可能なガントチャートとして表示します。 */
+    overflow-x: auto;
+    border: 1px solid #dde6ee;
+    border-radius: .5rem;
+    background: #fff;
+}
+
+.gantt-header,
+.gantt-row {
+    display: grid;
+    grid-template-columns: 260px minmax(960px, 1fr);
+    min-width: 1220px;
+}
+
+.gantt-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8fafc;
+    border-bottom: 1px solid #dde6ee;
+    font-weight: 600;
+}
+
+.gantt-row {
+    border-bottom: 1px solid #edf2f7;
+}
+
+.gantt-row:last-child {
+    border-bottom: 0;
+}
+
+.gantt-label {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    min-height: 42px;
+    padding: .45rem .75rem;
+    border-right: 1px solid #dde6ee;
+    overflow: hidden;
+}
+
+.gantt-label a,
+.gantt-job-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gantt-label small {
+    color: #6c757d;
+    white-space: nowrap;
+}
+
+.gantt-track {
+    position: relative;
+    min-height: 42px;
+    background:
+        repeating-linear-gradient(
+            to right,
+            rgba(15, 23, 42, .08) 0,
+            rgba(15, 23, 42, .08) 1px,
+            transparent 1px,
+            transparent calc(100% / 24)
+        );
+}
+
+.gantt-scale {
+    min-height: 42px;
+    background:
+        linear-gradient(to right, rgba(15, 23, 42, .12) 1px, transparent 1px),
+        #f8fafc;
+    background-size: calc(100% / 24) 100%;
+}
+
+.gantt-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid rgba(15, 23, 42, .22);
+}
+
+.gantt-tick span {
+    position: absolute;
+    top: .4rem;
+    transform: translateX(-50%);
+    color: #475569;
+    font-size: .78rem;
+    white-space: nowrap;
+}
+
+.gantt-bar {
+    position: absolute;
+    top: 9px;
+    height: 24px;
+    border-radius: 999px;
+    color: #fff;
+    font-size: .75rem;
+    line-height: 24px;
+    min-width: 4px;
+    overflow: hidden;
+    padding: 0 .45rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .2);
+}
+
+.gantt-flow-row .gantt-label {
+    background: #f8fbff;
+    font-weight: 600;
+}
+
+.gantt-flow-row .gantt-track {
+    background-color: #fbfdff;
+}
+
+.gantt-job-row .gantt-label {
+    padding-left: 1.5rem;
+}
+
+.gantt-job-row .gantt-track {
+    min-height: 36px;
+}
+
+.gantt-job-row .gantt-bar {
+    top: 7px;
+    height: 22px;
+    line-height: 22px;
+}
+
+.gantt-status-succeeded {
+    background: #198754;
+}
+
+.gantt-status-failed,
+.gantt-status-timedout {
+    background: #dc3545;
+}
+
+.gantt-status-running {
+    background: #0d6efd;
+}
+
+.gantt-status-skipped {
+    background: #6c757d;
+}
+
+.gantt-status-queued {
+    background: #f0ad4e;
+}
+
+.setup-shell {
+    /* 初期設定フォームを中央寄せし、入力項目を読みやすい幅に制限します。 */
+    max-width: 980px;
+    margin: 0 auto;
+    padding-bottom: 2rem;
+}
+
+.form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
+    color: var(--bs-secondary-color);
+    text-align: end;
+}
+
+.form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
+    text-align: start;
+}

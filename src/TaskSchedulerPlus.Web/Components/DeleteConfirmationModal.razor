@@ -1,0 +1,74 @@
+@* 削除操作の直前に必ず利用者へ確認を取るための共通 Bootstrap モーダルです。 *@
+@if (IsOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="@titleId">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h1 class="modal-title fs-5" id="@titleId">@Title</h1>
+                    <button type="button" class="btn-close" aria-label="閉じる" @onclick="CancelAsync" disabled="@IsProcessing"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-2">@Message</p>
+                    @if (!string.IsNullOrWhiteSpace(Detail))
+                    {
+                        <p class="text-secondary mb-0" style="white-space: pre-line;">@Detail</p>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CancelAsync" disabled="@IsProcessing">
+                        @CancelButtonText
+                    </button>
+                    <button type="button" class="btn @ConfirmButtonCssClass" @onclick="ConfirmAsync" disabled="@IsProcessing">
+                        @if (IsProcessing)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                        }
+                        @ConfirmButtonText
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private readonly string titleId = $"delete-confirmation-{Guid.NewGuid():N}";
+
+    [Parameter] public bool IsOpen { get; set; }
+
+    [Parameter] public string Title { get; set; } = "削除確認";
+
+    [Parameter] public string Message { get; set; } = "削除しますか。";
+
+    [Parameter] public string? Detail { get; set; }
+
+    [Parameter] public string ConfirmButtonText { get; set; } = "削除する";
+
+    [Parameter] public string ConfirmButtonCssClass { get; set; } = "btn-danger";
+
+    [Parameter] public string CancelButtonText { get; set; } = "キャンセル";
+
+    [Parameter] public bool IsProcessing { get; set; }
+
+    [Parameter] public EventCallback OnConfirm { get; set; }
+
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private async Task ConfirmAsync()
+    {
+        if (!IsProcessing)
+        {
+            await OnConfirm.InvokeAsync();
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        if (!IsProcessing)
+        {
+            await OnCancel.InvokeAsync();
+        }
+    }
+}

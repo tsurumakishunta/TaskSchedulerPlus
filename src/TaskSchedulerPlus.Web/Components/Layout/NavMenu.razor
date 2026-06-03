@@ -1,0 +1,184 @@
+@inject ISetupConfigurationStore SetupConfiguration
+@inject InitialSetupState InitialSetupState
+@inject IJSRuntime JS
+
+@* ログイン状態と権限に応じて、左サイドバーのナビゲーションを出し分けます。 *@
+<div class="app-sidebar d-flex flex-column flex-shrink-0 text-bg-dark @(IsCollapsed ? "collapsed" : null)">
+    <div class="sidebar-header d-flex align-items-center">
+        @if (IsInitialSetupRequired)
+        {
+            <a class="sidebar-brand" href="setup" title="@ApplicationName" @onclick="HandleBrandClickAsync" @onclick:preventDefault="IsCollapsed" @attributes="TooltipAttributes(ApplicationName)">
+                <span class="brand-mark"><img src="task-scheduler-plus-icon.svg" alt="" /></span>
+                <span class="sidebar-text">@ApplicationName</span>
+            </a>
+        }
+        else
+        {
+            <AuthorizeView Policy="@AppPolicies.ViewExecutionResults">
+                <Authorized>
+                    <a class="sidebar-brand" href="" title="@ApplicationName" @onclick="HandleBrandClickAsync" @onclick:preventDefault="IsCollapsed" @attributes="TooltipAttributes(ApplicationName)">
+                        <span class="brand-mark"><img src="task-scheduler-plus-icon.svg" alt="" /></span>
+                        <span class="sidebar-text">@ApplicationName</span>
+                    </a>
+                </Authorized>
+                <NotAuthorized>
+                    <a class="sidebar-brand" href="Account/Login" title="@ApplicationName" @onclick="HandleBrandClickAsync" @onclick:preventDefault="IsCollapsed" @attributes="TooltipAttributes(ApplicationName)">
+                        <span class="brand-mark"><img src="task-scheduler-plus-icon.svg" alt="" /></span>
+                        <span class="sidebar-text">@ApplicationName</span>
+                    </a>
+                </NotAuthorized>
+            </AuthorizeView>
+        }
+
+        @if (!IsCollapsed)
+        {
+            <button class="btn btn-sm sidebar-toggle" type="button" title="@ToggleTitle" @onclick="OnToggleSidebar">
+                <span class="bi bi-arrow-left-nav-menu" aria-hidden="true"></span>
+                <span class="visually-hidden">@ToggleTitle</span>
+            </button>
+        }
+    </div>
+
+    <hr />
+
+    <nav class="nav nav-pills flex-column mb-auto">
+        @if (IsInitialSetupRequired)
+        {
+            <div class="nav-item">
+                <NavLink class="nav-link text-white" href="setup" @attributes='TooltipAttributes("初期設定")'>
+                    <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
+                    <span class="sidebar-text">初期設定</span>
+                </NavLink>
+            </div>
+        }
+        else
+        {
+            <AuthorizeView Policy="@AppPolicies.ViewExecutionResults">
+                <Authorized>
+                    <div class="nav-item">
+                        <NavLink class="nav-link text-white" href="" Match="NavLinkMatch.All" @attributes='TooltipAttributes("ダッシュボード")'>
+                            <span class="bi bi-speedometer2-nav-menu" aria-hidden="true"></span>
+                            <span class="sidebar-text">ダッシュボード</span>
+                        </NavLink>
+                    </div>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Policy="@AppPolicies.ManageWorkflows">
+                <Authorized>
+                    <div class="nav-item">
+                        <NavLink class="nav-link text-white" href="workflows" @attributes='TooltipAttributes("ワークフロー")'>
+                            <span class="bi bi-diagram-3-fill-nav-menu" aria-hidden="true"></span>
+                            <span class="sidebar-text">ワークフロー</span>
+                        </NavLink>
+                    </div>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Policy="@AppPolicies.ViewExecutionResults">
+                <Authorized>
+                    <div class="nav-item">
+                        <NavLink class="nav-link text-white" href="runs" @attributes='TooltipAttributes("実行履歴")'>
+                            <span class="bi bi-clock-history-nav-menu" aria-hidden="true"></span>
+                            <span class="sidebar-text">実行履歴</span>
+                        </NavLink>
+                    </div>
+                </Authorized>
+            </AuthorizeView>
+
+            <AuthorizeView Policy="@AppPolicies.ManageUsers">
+                <Authorized>
+                    <div class="nav-item">
+                        <button class="nav-link text-white sidebar-dropdown-toggle" type="button" @onclick="ToggleAdminMenuAsync" aria-expanded="@adminMenuOpen" @attributes='TooltipAttributes("管理者メニュー")'>
+                            <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
+                            <span class="sidebar-text">管理者メニュー</span>
+                            <span class="bi sidebar-text dropdown-caret @(adminMenuOpen ? "bi-arrow-down-nav-menu" : "bi-arrow-right-nav-menu")" aria-hidden="true"></span>
+                        </button>
+                    </div>
+
+                    @if (adminMenuOpen && !IsCollapsed)
+                    {
+                        <div class="sidebar-submenu">
+                            <NavLink class="nav-link text-white" href="admin/run-history">
+                                実行履歴管理
+                            </NavLink>
+                            <NavLink class="nav-link text-white" href="admin/workflow-json">
+                                ワークフローJSON入出力
+                            </NavLink>
+                            <NavLink class="nav-link text-white" href="parameters">
+                                システム設定
+                            </NavLink>
+                            <NavLink class="nav-link text-white" href="users">
+                                ユーザー管理
+                            </NavLink>
+                        </div>
+                    }
+                </Authorized>
+            </AuthorizeView>
+        }
+    </nav>
+</div>
+
+@code {
+    [Parameter] public bool IsCollapsed { get; set; }
+
+    [Parameter] public EventCallback OnToggleSidebar { get; set; }
+
+    private bool adminMenuOpen = true;
+
+    private bool IsInitialSetupRequired =>
+        InitialSetupState.IsRequired || !SetupConfiguration.IsConfigured;
+
+    private string ApplicationName =>
+        SetupConfiguration.Current?.ApplicationName ?? "Task Scheduler Plus";
+
+    private string ToggleTitle =>
+        IsCollapsed ? "サイドバーを開く" : "サイドバーを閉じる";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("jobScheduler.refreshTooltips");
+        }
+        catch (JSDisconnectedException)
+        {
+            // 画面遷移や接続終了のタイミングでは tooltip 初期化を行いません。
+        }
+        catch (JSException)
+        {
+            // tooltip は補助表示なので、JavaScript が一時的に呼び出せない場合でも画面表示を継続します。
+        }
+    }
+
+    private async Task HandleBrandClickAsync()
+    {
+        if (IsCollapsed)
+        {
+            await OnToggleSidebar.InvokeAsync();
+        }
+    }
+
+    private async Task ToggleAdminMenuAsync()
+    {
+        if (IsCollapsed)
+        {
+            adminMenuOpen = true;
+            await OnToggleSidebar.InvokeAsync();
+            return;
+        }
+
+        adminMenuOpen = !adminMenuOpen;
+    }
+
+    private IReadOnlyDictionary<string, object>? TooltipAttributes(string title) =>
+        IsCollapsed
+            ? new Dictionary<string, object>
+            {
+                ["data-bs-toggle"] = "tooltip",
+                ["data-bs-placement"] = "right",
+                ["data-bs-title"] = title,
+                ["aria-label"] = title
+            }
+            : null;
+}

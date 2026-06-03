@@ -1,0 +1,15 @@
+[
+  {
+    "Name": "Worker then Web",
+    "Projects": [
+      {
+        "Path": "TaskSchedulerPlus.Worker\\TaskSchedulerPlus.Worker.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "TaskSchedulerPlus.Web\\TaskSchedulerPlus.Web.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]

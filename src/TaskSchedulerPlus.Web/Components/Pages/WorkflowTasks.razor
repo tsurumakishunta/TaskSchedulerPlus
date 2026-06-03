@@ -1,0 +1,782 @@
+@page "/workflows/{WorkflowId:int}/tasks"
+@attribute [Authorize(Policy = AppPolicies.ManageWorkflows)]
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject IFlowExecutionQueue ExecutionQueue
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@inject ILogger<WorkflowTasks> Logger
+
+@* 選択したワークフローに対して、実行タスクの追加・変更・削除・即時実行を行う画面です。 *@
+<PageTitle>タスク登録</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>タスク登録</h1>
+        <p class="text-secondary mb-0">ワークフロー内で実行する個別の処理を登録します。</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="workflows">ワークフロー一覧へ</a>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+}
+
+@if (workflow is null)
+{
+    <div class="alert alert-warning">対象のワークフローが見つかりません。</div>
+}
+else
+{
+    <div class="workflow-subnav mb-3">
+        <span>タスク登録</span>
+        <a href="@($"workflows/{WorkflowId}/schedule")">スケジュール設定</a>
+        <a href="runs">実行履歴</a>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+                <div>
+                    <h2 class="h5">@workflow.Name</h2>
+                    @if (!string.IsNullOrWhiteSpace(workflow.Description))
+                    {
+                        <p class="text-secondary mb-0">@workflow.Description</p>
+                    }
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-success" type="button" @onclick="ExecuteAsync" disabled="@(workflow.Nodes.Count == 0)">今すぐ実行</button>
+                    <a class="btn btn-outline-primary" href="@($"workflows/{WorkflowId}/schedule")">スケジュール設定</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h2 class="h5 mb-0">タスク一覧</h2>
+                <div class="d-flex gap-2">
+                    @if (workflow.Nodes.Count > 1)
+                    {
+                        <button class="btn @(isOrderEditMode ? "btn-outline-secondary" : "btn-outline-warning")"
+                                type="button"
+                                @onclick="ToggleOrderEditMode">
+                            @(isOrderEditMode ? "並び替え終了" : "並び替え編集")
+                        </button>
+                    }
+                    <a class="btn btn-outline-primary" href="@($"workflows/{WorkflowId}/tasks/create")">タスク追加</a>
+                </div>
+            </div>
+
+            @if (workflow.Nodes.Count == 0)
+            {
+                <p class="text-secondary mb-0">まだタスクが登録されていません。上の「タスク追加」から登録してください。</p>
+            }
+            else
+            {
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>タスクID</th>
+                            <th>タスク名</th>
+                            <th>実行ファイル</th>
+                            <th>正常戻り値</th>
+                            <th>変更</th>
+                            <th>並び替え</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var task in workflow.Nodes.OrderBy(node => node.DisplayOrder))
+                        {
+                            <tr class="@(task.Id == selectedTaskId ? "table-active" : null)">
+                                <td><code>@task.Id</code></td>
+                                <td>@task.Name</td>
+                                <td><code>@task.JobDefinition.Command</code></td>
+                                <td>@task.JobDefinition.SuccessExitCode</td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => EditTask(task.Id)">変更</button>
+                                    <AuthorizeView Roles="@AppRoles.Administrator">
+                                        <Authorized>
+                                            <button class="btn btn-sm btn-outline-danger ms-1" type="button" @onclick="() => RequestDeleteTaskAsync(task.Id)">削除</button>
+                                        </Authorized>
+                                    </AuthorizeView>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-secondary"
+                                            type="button"
+                                            title="並び替え編集中のみ移動できます"
+                                            disabled="@(!CanMoveTaskUp(task.Id))"
+                                            @onclick="() => MoveTaskAsync(task.Id, -1)">
+                                        ↑
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary ms-1"
+                                            type="button"
+                                            title="並び替え編集中のみ移動できます"
+                                            disabled="@(!CanMoveTaskDown(task.Id))"
+                                            @onclick="() => MoveTaskAsync(task.Id, 1)">
+                                        ↓
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    @if (showTaskEditor)
+    {
+        <div class="card mb-4">
+            <div class="card-body">
+                <h2 class="h5">@(editingTaskId is null ? "タスク追加" : "タスク変更")</h2>
+                <EditForm Model="taskEditor" OnValidSubmit="SaveTaskAsync" FormName="taskEditorForm">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary />
+
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">タスクID</label>
+                            <input class="form-control" value="@TaskEditorIdText" readonly disabled="@(editingTaskId is null)" />
+                            <div class="form-text">@(editingTaskId is null ? "保存時にシステムが自動採番します。" : "タスクIDは変更できません。")</div>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">タスク名</label>
+                            <InputText class="form-control" @bind-Value="taskEditor.Name" />
+                        </div>
+
+                        <div class="col-md-8">
+                            <label class="form-label">実行ファイル</label>
+                            <InputText class="form-control" @bind-Value="taskEditor.Command" placeholder="C:\Jobs\DailyTask.bat" />
+                            <div class="form-text">exe、bat、cmd のフルパス、または PATH から解決できるファイル名を指定してください。</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">正常戻り値</label>
+                            <InputNumber class="form-control" @bind-Value="taskEditor.SuccessExitCode" />
+                        </div>
+
+                        <div class="col-md-8">
+                            <label class="form-label">実行ファイルのパラメーター</label>
+                            <InputText class="form-control" @bind-Value="taskEditor.Arguments" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">タイムアウト（秒）</label>
+                            <InputNumber class="form-control" @bind-Value="taskEditor.TimeoutSeconds" />
+                        </div>
+
+                        <div class="col-md-8">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <label class="form-label mb-0">作業ディレクトリ</label>
+                                <button class="btn btn-link btn-sm p-0" type="button" @onclick="OpenWorkingDirectoryHelp">
+                                    <span class="bi bi-question-circle me-1" aria-hidden="true"></span>説明
+                                </button>
+                            </div>
+                            <InputText class="form-control" @bind-Value="taskEditor.WorkingDirectory" />
+                            <div class="form-text">空欄の場合は実行ファイルのフォルダー、ファイル名だけの場合はアプリの実行フォルダーを使用します。</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">正常終了時の挙動</label>
+                            <InputSelect class="form-select" @bind-Value="taskEditor.RunNextOnSuccess">
+                                <option value="true">次のタスクを実行する</option>
+                                <option value="false">後続タスクを実行しない</option>
+                            </InputSelect>
+                        </div>
+
+                        <div class="col-md-8">
+                            <label class="form-check">
+                                <InputCheckbox class="form-check-input" @bind-Value="taskEditor.StopOnFailure" />
+                                <span class="form-check-label">エラー時は後続タスクを実行しない</span>
+                            </label>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-check">
+                                <InputCheckbox class="form-check-input" @bind-Value="taskEditor.IsEnabled" />
+                                <span class="form-check-label">このタスクを有効にする</span>
+                            </label>
+                        </div>
+
+                        <div class="col-12">
+                            <button class="btn btn-primary" type="submit">@(editingTaskId is null ? "追加" : "変更を保存")</button>
+                            <button class="btn btn-outline-secondary ms-2" type="button" @onclick="CancelTaskEdit">キャンセル</button>
+                        </div>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    }
+
+    <WorkingDirectoryHelpModal IsOpen="isWorkingDirectoryHelpOpen" OnClose="CloseWorkingDirectoryHelp" />
+}
+
+<DeleteConfirmationModal IsOpen="@deleteTaskModalOpen"
+                         Title="タスク削除確認"
+                         Message="@deleteTaskMessage"
+                         Detail="@deleteTaskDetail"
+                         IsProcessing="@deleteTaskProcessing"
+                         OnConfirm="ConfirmDeleteTaskAsync"
+                         OnCancel="CancelDeleteTask" />
+
+@code {
+    [Parameter] public int WorkflowId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "created")]
+    private bool Created { get; set; }
+
+    private JobFlow? workflow;
+    private Guid? selectedTaskId;
+    private Guid? editingTaskId;
+    private TaskEditor taskEditor = NewTaskEditor();
+    private bool showTaskEditor;
+    private bool isOrderEditMode;
+    private string? message;
+    private bool isError;
+    private bool deleteTaskModalOpen;
+    private bool deleteTaskProcessing;
+    private Guid? pendingDeleteTaskId;
+    private string deleteTaskMessage = "タスクを削除しますか。";
+    private string? deleteTaskDetail;
+    private bool isWorkingDirectoryHelpOpen;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+        if (Created && string.IsNullOrWhiteSpace(message))
+        {
+            ShowMessage("タスクを追加しました。");
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        workflow = await db.JobFlows
+            .Include(item => item.Nodes)
+                .ThenInclude(node => node.JobDefinition)
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == WorkflowId);
+    }
+
+    private void EditTask(Guid taskId)
+    {
+        if (workflow is null)
+        {
+            return;
+        }
+
+        var task = workflow.Nodes.SingleOrDefault(item => item.Id == taskId);
+        if (task is null)
+        {
+            CancelTaskEdit();
+            return;
+        }
+
+        editingTaskId = task.Id;
+        selectedTaskId = task.Id;
+        taskEditor = TaskEditor.From(task);
+        showTaskEditor = true;
+        message = null;
+        isError = false;
+    }
+
+    private async Task SaveTaskAsync()
+    {
+        if (workflow is null)
+        {
+            Logger.LogWarning(
+                "タスク保存を中断しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                WorkflowId,
+                "ワークフローなし");
+            return;
+        }
+
+        var taskName = taskEditor.Name.Trim();
+        Logger.LogInformation(
+            "タスク保存を開始しました。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}, CommandName={CommandName}",
+            workflow.Id,
+            editingTaskId,
+            taskName,
+            SafeCommandName(taskEditor.Command));
+
+        if (string.IsNullOrWhiteSpace(taskName))
+        {
+            Logger.LogWarning(
+                "タスク保存を中断しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                workflow.Id,
+                "タスク名未入力");
+            ShowMessage("タスク名を入力してください。", true);
+            return;
+        }
+
+        if (!HasExecutableExtension(taskEditor.Command))
+        {
+            Logger.LogWarning(
+                "タスク保存を中断しました。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}, CommandName={CommandName}, Reason={Reason}",
+                workflow.Id,
+                editingTaskId,
+                taskName,
+                SafeCommandName(taskEditor.Command),
+                "実行ファイル拡張子不正");
+            ShowMessage("実行ファイルには .exe、.bat、.cmd のいずれかを指定してください。", true);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var normalizedTaskName = taskName.ToUpper();
+        var duplicateTaskQuery = db.JobNodes
+            .Where(item => item.JobFlowId == workflow.Id && item.Name.ToUpper() == normalizedTaskName);
+        if (editingTaskId is Guid editingId)
+        {
+            duplicateTaskQuery = duplicateTaskQuery.Where(item => item.Id != editingId);
+        }
+
+        if (await duplicateTaskQuery.AnyAsync())
+        {
+            Logger.LogWarning(
+                "タスク保存を中断しました。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}, Reason={Reason}",
+                workflow.Id,
+                editingTaskId,
+                taskName,
+                "タスク名重複");
+            ShowMessage("同じタスク名は登録できません。別のタスク名を入力してください。", true);
+            return;
+        }
+
+        JobNode task;
+        var isNewTask = editingTaskId is null;
+        if (editingTaskId is Guid taskId)
+        {
+            task = await db.JobNodes
+                .Include(item => item.JobDefinition)
+                .SingleAsync(item => item.Id == taskId);
+
+            var referenceCount = await db.JobNodes.CountAsync(item => item.JobDefinitionId == task.JobDefinitionId);
+            if (referenceCount > 1)
+            {
+                task.JobDefinition = CreateTaskDefinition(taskEditor);
+            }
+            else
+            {
+                CopyToDefinition(taskEditor, task.JobDefinition);
+            }
+
+            task.Name = taskName;
+            task.RunNextOnSuccess = taskEditor.RunNextOnSuccess;
+            task.StopOnFailure = taskEditor.StopOnFailure;
+        }
+        else
+        {
+            task = new JobNode
+            {
+                JobFlowId = workflow.Id,
+                JobDefinition = CreateTaskDefinition(taskEditor),
+                Name = taskName,
+                DisplayOrder = await db.JobNodes.CountAsync(item => item.JobFlowId == workflow.Id),
+                RunNextOnSuccess = taskEditor.RunNextOnSuccess,
+                StopOnFailure = taskEditor.StopOnFailure
+            };
+            db.JobNodes.Add(task);
+        }
+
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            Logger.LogWarning(
+                ex,
+                "タスク保存を中断しました。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}, Reason={Reason}",
+                workflow.Id,
+                editingTaskId,
+                taskName,
+                "タスク名重複");
+            ShowMessage("同じタスク名は登録できません。別のタスク名を入力してください。", true);
+            return;
+        }
+
+        Logger.LogInformation(
+            "タスクを保存しました。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}, IsNewTask={IsNewTask}, JobDefinitionId={JobDefinitionId}",
+            workflow.Id,
+            task.Id,
+            task.Name,
+            isNewTask,
+            task.JobDefinitionId);
+
+        selectedTaskId = task.Id;
+        editingTaskId = null;
+        showTaskEditor = false;
+        await LoadAsync();
+        ShowMessage(isNewTask ? "タスクを追加しました。" : "タスクを保存しました。");
+    }
+
+    private void CancelTaskEdit()
+    {
+        editingTaskId = null;
+        selectedTaskId = null;
+        taskEditor = NewTaskEditor();
+        showTaskEditor = false;
+        message = null;
+        isError = false;
+    }
+
+    private async Task RequestDeleteTaskAsync(Guid taskId)
+    {
+        if (workflow is null)
+        {
+            Logger.LogWarning(
+                "タスク削除要求を中断しました。WorkflowId={WorkflowId}, TaskId={TaskId}, Reason={Reason}",
+                WorkflowId,
+                taskId,
+                "ワークフローなし");
+            return;
+        }
+
+        if (!await CurrentUserIsAdministratorAsync())
+        {
+            Logger.LogWarning(
+                "タスク削除要求を拒否しました。WorkflowId={WorkflowId}, TaskId={TaskId}, Reason={Reason}",
+                workflow.Id,
+                taskId,
+                "管理者権限なし");
+            ShowMessage("タスクの削除は管理者のみ実行できます。", true);
+            return;
+        }
+
+        var task = workflow.Nodes.SingleOrDefault(item => item.Id == taskId);
+        if (task is null)
+        {
+            Logger.LogWarning(
+                "タスク削除要求を中断しました。WorkflowId={WorkflowId}, TaskId={TaskId}, Reason={Reason}",
+                workflow.Id,
+                taskId,
+                "対象なし");
+            ShowMessage("対象のタスクが見つかりません。", true);
+            await LoadAsync();
+            return;
+        }
+
+        Logger.LogInformation(
+            "タスク削除確認を表示します。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}",
+            workflow.Id,
+            taskId,
+            task.Name);
+        pendingDeleteTaskId = taskId;
+        deleteTaskMessage = $"タスク「{task.Name}」を削除しますか。";
+        deleteTaskDetail = "この操作は元に戻せません。実行履歴があるタスクは削除できません。";
+        deleteTaskModalOpen = true;
+    }
+
+    private async Task ConfirmDeleteTaskAsync()
+    {
+        if (pendingDeleteTaskId is not Guid taskId)
+        {
+            CancelDeleteTask();
+            return;
+        }
+
+        deleteTaskProcessing = true;
+        try
+        {
+            await DeleteTaskAsync(taskId);
+        }
+        finally
+        {
+            deleteTaskProcessing = false;
+            CancelDeleteTask();
+        }
+    }
+
+    private void CancelDeleteTask()
+    {
+        deleteTaskModalOpen = false;
+        pendingDeleteTaskId = null;
+        deleteTaskMessage = "タスクを削除しますか。";
+        deleteTaskDetail = null;
+    }
+
+    private async Task DeleteTaskAsync(Guid taskId)
+    {
+        if (workflow is null)
+        {
+            Logger.LogWarning(
+                "タスク削除を中断しました。WorkflowId={WorkflowId}, TaskId={TaskId}, Reason={Reason}",
+                WorkflowId,
+                taskId,
+                "ワークフローなし");
+            return;
+        }
+
+        try
+        {
+            Logger.LogWarning(
+                "タスク削除を開始しました。WorkflowId={WorkflowId}, TaskId={TaskId}",
+                workflow.Id,
+                taskId);
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var task = await db.JobNodes.SingleAsync(item => item.Id == taskId);
+            var definitionId = task.JobDefinitionId;
+            db.JobNodes.Remove(task);
+            await db.SaveChangesAsync();
+
+            if (!await db.JobNodes.AnyAsync(item => item.JobDefinitionId == definitionId))
+            {
+                var definition = await db.JobDefinitions.SingleOrDefaultAsync(item => item.Id == definitionId);
+                if (definition is not null)
+                {
+                    db.JobDefinitions.Remove(definition);
+                    await db.SaveChangesAsync();
+                }
+            }
+
+            await NormalizeDisplayOrderAsync(db, workflow.Id);
+            selectedTaskId = null;
+            editingTaskId = null;
+            showTaskEditor = false;
+            await LoadAsync();
+            Logger.LogWarning(
+                "タスクを削除しました。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}, JobDefinitionId={JobDefinitionId}",
+                workflow.Id,
+                taskId,
+                task.Name,
+                definitionId);
+            ShowMessage("タスクを削除しました。");
+        }
+        catch (DbUpdateException exception)
+        {
+            Logger.LogError(
+                exception,
+                "タスク削除に失敗しました。WorkflowId={WorkflowId}, TaskId={TaskId}",
+                workflow.Id,
+                taskId);
+            ShowMessage("実行履歴があるタスクは削除できません。無効化または名称変更で運用してください。", true);
+        }
+    }
+
+    private async Task MoveTaskAsync(Guid taskId, int direction)
+    {
+        if (workflow is null)
+        {
+            return;
+        }
+
+        if (!isOrderEditMode)
+        {
+            Logger.LogWarning(
+                "タスク表示順の変更を拒否しました。WorkflowId={WorkflowId}, TaskId={TaskId}, Direction={Direction}, Reason={Reason}",
+                workflow.Id,
+                taskId,
+                direction,
+                "並び替え編集モードではない");
+            ShowMessage("並び替え編集を開始してから上下移動してください。", true);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var tasks = await db.JobNodes
+            .Where(item => item.JobFlowId == workflow.Id)
+            .OrderBy(item => item.DisplayOrder)
+            .ToListAsync();
+        var currentIndex = tasks.FindIndex(item => item.Id == taskId);
+        var nextIndex = currentIndex + direction;
+        if (currentIndex < 0 || nextIndex < 0 || nextIndex >= tasks.Count)
+        {
+            return;
+        }
+
+        (tasks[currentIndex].DisplayOrder, tasks[nextIndex].DisplayOrder) =
+            (tasks[nextIndex].DisplayOrder, tasks[currentIndex].DisplayOrder);
+        await db.SaveChangesAsync();
+        selectedTaskId = taskId;
+        Logger.LogInformation(
+            "タスクの表示順を変更しました。WorkflowId={WorkflowId}, TaskId={TaskId}, Direction={Direction}",
+            workflow.Id,
+            taskId,
+            direction);
+        await LoadAsync();
+    }
+
+    private async Task ExecuteAsync()
+    {
+        if (workflow is null)
+        {
+            Logger.LogWarning(
+                "ワークフロー手動実行を中断しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                WorkflowId,
+                "ワークフローなし");
+            return;
+        }
+
+        var authenticationState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userId = authenticationState.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        Logger.LogInformation(
+            "ワークフロー手動実行を開始しました。WorkflowId={WorkflowId}, RequestedByUserId={RequestedByUserId}",
+            workflow.Id,
+            userId ?? "unknown");
+        var runId = await ExecutionQueue.EnqueueAsync(workflow.Id, userId);
+        Logger.LogInformation(
+            "ワークフロー手動実行をキューへ登録しました。WorkflowId={WorkflowId}, RunId={RunId}, RequestedByUserId={RequestedByUserId}",
+            workflow.Id,
+            runId,
+            userId ?? "unknown");
+        Navigation.NavigateTo($"runs/{runId}");
+    }
+
+    private async Task<bool> CurrentUserIsAdministratorAsync()
+    {
+        var authenticationState = await AuthStateProvider.GetAuthenticationStateAsync();
+        return authenticationState.User.IsInRole(AppRoles.Administrator);
+    }
+
+    private void ToggleOrderEditMode()
+    {
+        isOrderEditMode = !isOrderEditMode;
+        ShowMessage(
+            isOrderEditMode
+                ? "並び替え編集を開始しました。上下ボタンでタスクの順番を変更できます。"
+                : "並び替え編集を終了しました。");
+    }
+
+    private bool CanMoveTaskUp(Guid taskId) =>
+        isOrderEditMode && CanMoveUp(taskId);
+
+    private bool CanMoveTaskDown(Guid taskId) =>
+        isOrderEditMode && CanMoveDown(taskId);
+
+    private bool CanMoveUp(Guid taskId) =>
+        workflow is not null &&
+        workflow.Nodes.OrderBy(node => node.DisplayOrder).FirstOrDefault()?.Id != taskId;
+
+    private bool CanMoveDown(Guid taskId) =>
+        workflow is not null &&
+        workflow.Nodes.OrderByDescending(node => node.DisplayOrder).FirstOrDefault()?.Id != taskId;
+
+    private static async Task NormalizeDisplayOrderAsync(ApplicationDbContext db, int workflowId)
+    {
+        var tasks = await db.JobNodes
+            .Where(item => item.JobFlowId == workflowId)
+            .OrderBy(item => item.DisplayOrder)
+            .ToListAsync();
+
+        for (var index = 0; index < tasks.Count; index++)
+        {
+            tasks[index].DisplayOrder = index;
+        }
+
+        await db.SaveChangesAsync();
+    }
+
+    private static JobDefinition CreateTaskDefinition(TaskEditor editor)
+    {
+        var definition = new JobDefinition();
+        CopyToDefinition(editor, definition);
+        return definition;
+    }
+
+    private static void CopyToDefinition(TaskEditor editor, JobDefinition definition)
+    {
+        definition.Name = editor.Name.Trim();
+        definition.Description = editor.Description;
+        definition.Command = editor.Command.Trim();
+        definition.Arguments = editor.Arguments;
+        definition.WorkingDirectory = editor.WorkingDirectory;
+        definition.SuccessExitCode = editor.SuccessExitCode;
+        definition.TimeoutSeconds = editor.TimeoutSeconds;
+        definition.IsEnabled = editor.IsEnabled;
+    }
+
+    private static TaskEditor NewTaskEditor() => new()
+    {
+        Id = Guid.Empty,
+        SuccessExitCode = 0,
+        TimeoutSeconds = 300,
+        RunNextOnSuccess = true,
+        StopOnFailure = true,
+        IsEnabled = true
+    };
+
+    private static bool HasExecutableExtension(string path)
+    {
+        var extension = Path.GetExtension(path.Trim().Trim('"'));
+        return extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SafeCommandName(string command)
+    {
+        var text = command.Trim().Trim('"');
+        return string.IsNullOrWhiteSpace(text) ? "-" : Path.GetFileName(text);
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception) =>
+        exception.InnerException is Microsoft.Data.SqlClient.SqlException sqlException &&
+        sqlException.Number is 2601 or 2627;
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+
+    private void OpenWorkingDirectoryHelp()
+    {
+        isWorkingDirectoryHelpOpen = true;
+    }
+
+    private void CloseWorkingDirectoryHelp()
+    {
+        isWorkingDirectoryHelpOpen = false;
+    }
+
+    private string TaskEditorIdText =>
+        editingTaskId is null ? "保存時に自動採番されます" : taskEditor.Id.ToString();
+
+    private sealed class TaskEditor
+    {
+        public Guid Id { get; set; }
+
+        [Required(ErrorMessage = "タスク名を入力してください。")]
+        [StringLength(100, ErrorMessage = "タスク名は {1} 文字以内で入力してください。")]
+        public string Name { get; set; } = string.Empty;
+
+        [StringLength(500, ErrorMessage = "説明は {1} 文字以内で入力してください。")]
+        public string? Description { get; set; }
+
+        [Required(ErrorMessage = "実行ファイルを入力してください。")]
+        [StringLength(500, ErrorMessage = "実行ファイルは {1} 文字以内で入力してください。")]
+        public string Command { get; set; } = string.Empty;
+
+        [StringLength(1000, ErrorMessage = "パラメーターは {1} 文字以内で入力してください。")]
+        public string? Arguments { get; set; }
+
+        [StringLength(500, ErrorMessage = "作業ディレクトリは {1} 文字以内で入力してください。")]
+        public string? WorkingDirectory { get; set; }
+
+        public int SuccessExitCode { get; set; }
+
+        [Range(1, 86400, ErrorMessage = "タイムアウトは 1 秒から 86400 秒の範囲で入力してください。")]
+        public int TimeoutSeconds { get; set; } = 300;
+
+        public bool RunNextOnSuccess { get; set; } = true;
+
+        public bool StopOnFailure { get; set; } = true;
+
+        public bool IsEnabled { get; set; } = true;
+
+        public static TaskEditor From(JobNode task) => new()
+        {
+            Id = task.Id,
+            Name = task.Name,
+            Description = task.JobDefinition.Description,
+            Command = task.JobDefinition.Command,
+            Arguments = task.JobDefinition.Arguments,
+            WorkingDirectory = task.JobDefinition.WorkingDirectory,
+            SuccessExitCode = task.JobDefinition.SuccessExitCode,
+            TimeoutSeconds = task.JobDefinition.TimeoutSeconds,
+            RunNextOnSuccess = task.RunNextOnSuccess,
+            StopOnFailure = task.StopOnFailure,
+            IsEnabled = task.JobDefinition.IsEnabled
+        };
+    }
+}

@@ -1,0 +1,143 @@
+@page "/admin/workflow-json/import"
+@attribute [Authorize(Roles = AppRoles.Administrator)]
+@inject WorkflowJsonTransferService WorkflowJsonTransfer
+@inject ILogger<AdminWorkflowJsonImport> Logger
+@using System.IO
+
+@* JSONファイルからワークフローとタスク定義を取り込む画面です。 *@
+<PageTitle>ワークフローJSONインポート</PageTitle>
+
+<div class="settings-page">
+    <div class="settings-title">
+        <div>
+            <h1>ワークフローJSONインポート</h1>
+            <p class="text-secondary mb-0">
+                エクスポート済みのJSONファイルから、ワークフローとタスク定義を取り込みます。
+            </p>
+        </div>
+        <a class="btn btn-outline-secondary" href="admin/workflow-json">入出力メニューへ戻る</a>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+    }
+
+    <section class="settings-section">
+        <div class="settings-section-heading">
+            <div>
+                <div class="settings-eyebrow">IMPORT</div>
+                <h2>インポートファイル</h2>
+                <p>
+                    JSONファイルを選択してインポートします。
+                    ZIPファイルを取り込む場合は、先に展開してJSONファイルを選択してください。
+                </p>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-end">
+            <div class="col-md-7">
+                <label class="form-label">JSONファイル</label>
+                <InputFile class="form-control" OnChange="OnFileSelected" accept=".json,application/json" />
+                <div class="form-text">
+                    最大 @MaxFileSizeMegabytes MB まで読み込めます。
+                </div>
+            </div>
+            <div class="col-md-5">
+                <button class="btn btn-primary" type="button" @onclick="ImportAsync" disabled="@(selectedFile is null || isProcessing)">
+                    JSONをインポート
+                </button>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(selectedFileName))
+        {
+            <dl class="settings-list mt-3">
+                <dt>選択中のファイル</dt>
+                <dd>@selectedFileName</dd>
+            </dl>
+        }
+    </section>
+</div>
+
+@code {
+    private const long MaxFileSize = 10 * 1024 * 1024;
+    private const int MaxFileSizeMegabytes = 10;
+
+    private IBrowserFile? selectedFile;
+    private string? selectedFileName;
+    private string? message;
+    private bool isError;
+    private bool isProcessing;
+
+    private void OnFileSelected(InputFileChangeEventArgs args)
+    {
+        selectedFile = args.File;
+        selectedFileName = selectedFile.Name;
+        Logger.LogInformation(
+            "ワークフローJSONインポートファイルを選択しました。FileName={FileName}, Size={Size}",
+            selectedFile.Name,
+            selectedFile.Size);
+        message = null;
+        isError = false;
+    }
+
+    private async Task ImportAsync()
+    {
+        if (selectedFile is null)
+        {
+            Logger.LogWarning("ワークフローJSONインポートを中断しました。Reason={Reason}", "ファイル未選択");
+            ShowMessage("インポートするJSONファイルを選択してください。", true);
+            return;
+        }
+
+        try
+        {
+            isProcessing = true;
+            Logger.LogInformation(
+                "ワークフローJSONインポートを開始しました。FileName={FileName}, Size={Size}",
+                selectedFile.Name,
+                selectedFile.Size);
+            await using var stream = selectedFile.OpenReadStream(MaxFileSize);
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+            var result = await WorkflowJsonTransfer.ImportAsync(json);
+            ShowMessage(
+                $"ワークフロー {result.WorkflowCount} 件、タスク {result.TaskCount} 件をインポートしました。" +
+                $" 別名登録 {result.RenamedWorkflowCount} 件、タスクID再採番 {result.RegeneratedTaskIdCount} 件です。");
+            selectedFile = null;
+            selectedFileName = null;
+            Logger.LogInformation(
+                "ワークフローJSONをインポートしました。WorkflowCount={WorkflowCount}, TaskCount={TaskCount}, RenamedWorkflowCount={RenamedWorkflowCount}, RegeneratedTaskIdCount={RegeneratedTaskIdCount}",
+                result.WorkflowCount,
+                result.TaskCount,
+                result.RenamedWorkflowCount,
+                result.RegeneratedTaskIdCount);
+        }
+        catch (WorkflowJsonTransferException exception)
+        {
+            Logger.LogWarning(exception, "ワークフローJSONインポートを中断しました。");
+            ShowMessage(exception.Message, true);
+        }
+        catch (IOException exception)
+        {
+            Logger.LogWarning(exception, "ワークフローJSONインポートファイルの読み込みに失敗しました。");
+            ShowMessage($"ファイルを読み込めませんでした。{exception.Message}", true);
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "ワークフローJSONインポートに失敗しました。");
+            ShowMessage($"インポートに失敗しました。{exception.Message}", true);
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+}

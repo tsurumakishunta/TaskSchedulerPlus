@@ -1,0 +1,75 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+
+@* アプリ全体の共通レイアウトです。ログインやパスワード再設定の画面では業務ナビゲーションを表示しません。 *@
+@if (IsStandaloneAuthPage)
+{
+    <main class="auth-main">
+        <article class="auth-content">
+            @Body
+        </article>
+    </main>
+}
+else
+{
+    <div class="page @(sidebarCollapsed ? "sidebar-is-collapsed" : null)">
+        <aside class="sidebar @(sidebarCollapsed ? "sidebar-collapsed" : null)">
+            <NavMenu IsCollapsed="sidebarCollapsed" OnToggleSidebar="ToggleSidebar" />
+        </aside>
+
+        <main>
+            <div class="top-row px-4">
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-secondary d-md-none" type="button" @onclick="ToggleSidebar">
+                        メニュー
+                    </button>
+                    <span class="text-secondary small">ワークフロー運用管理</span>
+                </div>
+                <AuthorizeView>
+                    <Authorized>
+                        <div class="account-menu">
+                            <a class="account-name" href="Account/Manage">@context.User.Identity?.Name</a>
+                            <form action="Account/Logout" method="post">
+                                <AntiforgeryToken />
+                                <input type="hidden" name="ReturnUrl" value="Account/Login" />
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">ログアウト</button>
+                            </form>
+                        </div>
+                    </Authorized>
+                    <NotAuthorized>
+                        <a class="btn btn-sm btn-outline-primary" href="Account/Login">ログイン</a>
+                    </NotAuthorized>
+                </AuthorizeView>
+            </div>
+
+            <article class="content px-4">
+                @Body
+            </article>
+        </main>
+    </div>
+}
+
+<div id="blazor-error-ui" data-nosnippet>
+    予期しないエラーが発生しました。
+    <a href="." class="reload">再読み込み</a>
+    <span class="dismiss">閉じる</span>
+</div>
+
+@code {
+    private bool sidebarCollapsed;
+
+    private bool IsStandaloneAuthPage
+    {
+        get
+        {
+            var path = new Uri(Navigation.Uri).LocalPath.TrimEnd('/');
+            return path.Equals("/Account/Login", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("/Account/ForgotPassword", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void ToggleSidebar()
+    {
+        sidebarCollapsed = !sidebarCollapsed;
+    }
+}

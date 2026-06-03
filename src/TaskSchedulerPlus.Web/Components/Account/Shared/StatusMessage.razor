@@ -1,0 +1,32 @@
+﻿@if (!string.IsNullOrEmpty(DisplayMessage))
+{
+    // Identity 操作後の成功・エラーメッセージを Bootstrap alert として表示します。
+    var statusMessageClass = DisplayMessage.StartsWith("エラー") ? "danger" : "success";
+    <div class="alert alert-@statusMessageClass" role="alert">
+        @DisplayMessage
+    </div>
+}
+
+@code {
+    private string? messageFromCookie;
+
+    [Parameter]
+    public string? Message { get; set; }
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    private string? DisplayMessage => Message ?? messageFromCookie;
+
+    protected override void OnInitialized()
+    {
+        // リダイレクト直後のメッセージは短命 Cookie から取得します。
+        messageFromCookie = HttpContext.Request.Cookies[IdentityRedirectManager.StatusCookieName];
+
+        if (messageFromCookie is not null)
+        {
+            // 同じメッセージが再表示されないよう、読み取ったら Cookie を削除します。
+            HttpContext.Response.Cookies.Delete(IdentityRedirectManager.StatusCookieName);
+        }
+    }
+}

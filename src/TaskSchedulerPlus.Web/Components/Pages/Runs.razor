@@ -1,0 +1,407 @@
+@page "/runs"
+@page "/runs/{RunId:int}"
+@attribute [Authorize(Policy = AppPolicies.ViewExecutionResults)]
+@using System.Globalization
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ISetupConfigurationStore SetupConfiguration
+
+@* 実行履歴を日別のガントチャートと一覧で確認する画面です。 *@
+<PageTitle>実行履歴</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>実行履歴</h1>
+        <p class="text-secondary mb-0">指定日の 0:00 から 24:00 までをガントチャート形式で表示します。</p>
+    </div>
+    <button class="btn btn-outline-primary" @onclick="LoadAsync">更新</button>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">表示日（@TimeZoneDisplayName）</label>
+                <input type="date" class="form-control" @bind="selectedDate" />
+            </div>
+            <div class="col-md-8 d-flex flex-wrap gap-2">
+                <button class="btn btn-outline-secondary" type="button" @onclick="() => ChangeDateAsync(-1)">前日</button>
+                <button class="btn btn-outline-secondary" type="button" @onclick="SetTodayAsync">今日</button>
+                <button class="btn btn-outline-secondary" type="button" @onclick="() => ChangeDateAsync(1)">翌日</button>
+                <button class="btn btn-primary" type="button" @onclick="LoadAsync">表示</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="summary-card">
+            <span>実行数</span>
+            <strong>@runs.Count</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="summary-card">
+            <span>成功</span>
+            <strong class="text-success">@runs.Count(run => run.Status == ExecutionStatus.Succeeded)</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="summary-card">
+            <span>失敗</span>
+            <strong class="text-danger">@runs.Count(run => run.Status is ExecutionStatus.Failed or ExecutionStatus.TimedOut)</strong>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="summary-card">
+            <span>実行中</span>
+            <strong class="text-primary">@runs.Count(run => run.Status == ExecutionStatus.Running)</strong>
+        </div>
+    </div>
+</div>
+
+<section class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 class="h4 mb-0">日別ガントチャート</h2>
+            <span class="text-secondary">@selectedDate.ToString("yyyy/MM/dd")</span>
+        </div>
+
+        @if (timelineRows.Count == 0)
+        {
+            <p class="text-secondary mb-0">この日に実行履歴はありません。</p>
+        }
+        else
+        {
+            <div class="gantt-shell">
+                <div class="gantt-header">
+                    <div class="gantt-label">ワークフロー / タスク</div>
+                    <div class="gantt-track gantt-scale">
+                        @for (var hour = 0; hour <= 24; hour += 2)
+                        {
+                            <div class="gantt-tick" style="@TickStyle(hour)">
+                                <span>@($"{hour:00}:00")</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @foreach (var row in timelineRows)
+                {
+                    <div class="gantt-row gantt-flow-row">
+                        <div class="gantt-label">
+                            <a href="@($"runs/{row.RunId}")">#@row.RunId @row.Name</a>
+                            <span class="@StatusClass(row.Status)">@StatusText(row.Status)</span>
+                            <small>@FormatTimeRange(row.StartedAt, row.CompletedAt)</small>
+                        </div>
+                        <div class="gantt-track">
+                            <div class="@($"gantt-bar {GanttStatusClass(row.Status)}")"
+                                 style="@BarStyle(row.StartedAt, row.CompletedAt)"
+                                 title="@BarTitle(row.Name, row.Status, row.StartedAt, row.CompletedAt)">
+                                <span>@DurationText(row.StartedAt, row.CompletedAt)</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    @foreach (var job in row.Jobs)
+                    {
+                        <div class="gantt-row gantt-job-row">
+                            <div class="gantt-label">
+                                <span class="gantt-job-name">@job.Name</span>
+                                <span class="@StatusClass(job.Status)">@StatusText(job.Status)</span>
+                                <small>@FormatTimeRange(job.StartedAt, job.CompletedAt)</small>
+                            </div>
+                            <div class="gantt-track">
+                                <div class="@($"gantt-bar {GanttStatusClass(job.Status)}")"
+                                     style="@BarStyle(job.StartedAt, job.CompletedAt)"
+                                     title="@BarTitle(job.Name, job.Status, job.StartedAt, job.CompletedAt)">
+                                    <span>@DurationText(job.StartedAt, job.CompletedAt)</span>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>
+</section>
+
+<h2 class="h4">この日の実行一覧</h2>
+<table class="table align-middle">
+    <thead>
+        <tr><th>ID</th><th>ワークフロー</th><th>依頼日時</th><th>開始</th><th>完了</th><th>所要時間</th><th>状態</th><th></th></tr>
+    </thead>
+    <tbody>
+        @foreach (var run in runs)
+        {
+            <tr class="@(run.Id == RunId ? "table-active" : null)">
+                <td>@run.Id</td>
+                <td>@run.JobFlow.Name</td>
+                <td>@Format(run.RequestedAt)</td>
+                <td>@Format(run.StartedAt)</td>
+                <td>@Format(run.CompletedAt)</td>
+                <td>@DurationText(run.StartedAt ?? run.RequestedAt, run.CompletedAt)</td>
+                <td><span class="@StatusClass(run.Status)">@StatusText(run.Status)</span></td>
+                <td><a href="@($"runs/{run.Id}")">詳細</a></td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@if (selectedRun is not null)
+{
+    <h2 class="h4 mt-4">実行 #@selectedRun.Id の詳細</h2>
+    @if (!string.IsNullOrWhiteSpace(selectedRun.Message))
+    {
+        <div class="alert alert-warning">@selectedRun.Message</div>
+    }
+    <table class="table run-details">
+        <thead>
+            <tr><th>タスク</th><th>開始</th><th>完了</th><th>所要時間</th><th>状態</th><th>終了コード</th><th>出力</th></tr>
+        </thead>
+        <tbody>
+            @foreach (var job in selectedRun.JobRuns.OrderBy(item => item.JobNode.DisplayOrder))
+            {
+                <tr>
+                    <td>@job.JobNode.Name</td>
+                    <td>@Format(job.StartedAt)</td>
+                    <td>@Format(job.CompletedAt)</td>
+                    <td>@DurationText(job.StartedAt, job.CompletedAt)</td>
+                    <td><span class="@StatusClass(job.Status)">@StatusText(job.Status)</span></td>
+                    <td>@job.ExitCode</td>
+                    <td>
+                        @if (!string.IsNullOrWhiteSpace(job.Output))
+                        {
+                            <details><summary>標準出力</summary><pre>@job.Output</pre></details>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(job.ErrorOutput))
+                        {
+                            <details><summary>メッセージ / エラー</summary><pre>@job.ErrorOutput</pre></details>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    [Parameter] public int? RunId { get; set; }
+
+    private List<FlowRun> runs = [];
+    private List<RunTimelineRow> timelineRows = [];
+    private FlowRun? selectedRun;
+    private DateTime selectedDate;
+    private bool selectedDateInitialized;
+
+    private TimeZoneInfo AppTimeZone => ResolveAppTimeZone();
+    private string TimeZoneDisplayName => AppTimeZone.DisplayName;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!selectedDateInitialized)
+        {
+            selectedDate = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, AppTimeZone).Date;
+            selectedDateInitialized = true;
+        }
+
+        if (RunId is int id)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var run = await db.FlowRuns
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.Id == id);
+            if (run is not null)
+            {
+                selectedDate = TimeZoneInfo.ConvertTime(run.StartedAt ?? run.RequestedAt, AppTimeZone).Date;
+            }
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var dayStartUtc = ToDateTimeOffset(selectedDate.Date);
+        var dayEndUtc = ToDateTimeOffset(selectedDate.Date.AddDays(1));
+        var now = DateTimeOffset.UtcNow;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        runs = await db.FlowRuns
+            .Include(run => run.JobFlow)
+            .Include(run => run.JobRuns)
+                .ThenInclude(jobRun => jobRun.JobNode)
+            .Where(run => (run.StartedAt ?? run.RequestedAt) < dayEndUtc &&
+                (run.CompletedAt ?? now) >= dayStartUtc)
+            .OrderBy(run => run.StartedAt ?? run.RequestedAt)
+            .AsNoTracking()
+            .ToListAsync();
+
+        selectedRun = RunId is int id
+            ? await db.FlowRuns
+                .Include(run => run.JobFlow)
+                .Include(run => run.JobRuns)
+                    .ThenInclude(jobRun => jobRun.JobNode)
+                .AsNoTracking()
+                .SingleOrDefaultAsync(run => run.Id == id)
+            : null;
+
+        timelineRows = runs.Select(ToTimelineRow).ToList();
+    }
+
+    private async Task ChangeDateAsync(int days)
+    {
+        selectedDate = selectedDate.Date.AddDays(days);
+        await LoadAsync();
+    }
+
+    private async Task SetTodayAsync()
+    {
+        selectedDate = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, AppTimeZone).Date;
+        await LoadAsync();
+    }
+
+    private RunTimelineRow ToTimelineRow(FlowRun run)
+    {
+        var start = run.StartedAt ?? run.RequestedAt;
+        var jobs = run.JobRuns
+            .OrderBy(job => job.JobNode.DisplayOrder)
+            .Select(job =>
+            {
+                var jobStart = job.StartedAt ?? job.CompletedAt ?? start;
+                var jobEnd = job.CompletedAt ?? (job.Status == ExecutionStatus.Running ? DateTimeOffset.UtcNow : jobStart);
+                return new JobTimelineRow(job.JobNode.Name, job.Status, jobStart, jobEnd);
+            })
+            .ToList();
+
+        return new RunTimelineRow(run.Id, run.JobFlow.Name, run.Status, start, run.CompletedAt, jobs);
+    }
+
+    private string BarStyle(DateTimeOffset start, DateTimeOffset? end)
+    {
+        var dayStart = selectedDate.Date;
+        var localStart = TimeZoneInfo.ConvertTime(start, AppTimeZone).DateTime;
+        var localEnd = TimeZoneInfo.ConvertTime(end ?? DateTimeOffset.UtcNow, AppTimeZone).DateTime;
+
+        var startMinutes = Math.Clamp((localStart - dayStart).TotalMinutes, 0, 1440);
+        var endMinutes = Math.Clamp((localEnd - dayStart).TotalMinutes, 0, 1440);
+        if (endMinutes <= startMinutes)
+        {
+            endMinutes = Math.Min(startMinutes + 1, 1440);
+        }
+
+        var left = startMinutes / 1440 * 100;
+        var width = Math.Max((endMinutes - startMinutes) / 1440 * 100, 0.25);
+        return string.Create(CultureInfo.InvariantCulture, $"left:{left:0.###}%;width:{width:0.###}%;");
+    }
+
+    private static string TickStyle(int hour)
+    {
+        var left = hour / 24d * 100;
+        return string.Create(CultureInfo.InvariantCulture, $"left:{left:0.###}%;");
+    }
+
+    private string BarTitle(string name, ExecutionStatus status, DateTimeOffset start, DateTimeOffset? end) =>
+        $"{name} / {StatusText(status)} / {FormatTimeRange(start, end)}";
+
+    private string FormatTimeRange(DateTimeOffset? start, DateTimeOffset? end)
+    {
+        var startText = start is null ? "-" : TimeZoneInfo.ConvertTime(start.Value, AppTimeZone).ToString("HH:mm:ss");
+        var endText = end is null ? "実行中" : TimeZoneInfo.ConvertTime(end.Value, AppTimeZone).ToString("HH:mm:ss");
+        return $"{startText} - {endText}";
+    }
+
+    private string Format(DateTimeOffset? date) => date is null ? "-" : Format(date.Value);
+
+    private string Format(DateTimeOffset date) =>
+        TimeZoneInfo.ConvertTime(date, AppTimeZone).ToString("yyyy/MM/dd HH:mm:ss");
+
+    private static string DurationText(DateTimeOffset? start, DateTimeOffset? end)
+    {
+        if (start is null)
+        {
+            return "-";
+        }
+
+        return DurationText(start.Value, end);
+    }
+
+    private static string DurationText(DateTimeOffset start, DateTimeOffset? end)
+    {
+        var duration = (end ?? DateTimeOffset.UtcNow) - start;
+        if (duration < TimeSpan.Zero)
+        {
+            duration = TimeSpan.Zero;
+        }
+
+        return duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}:{duration.Minutes:00}:{duration.Seconds:00}"
+            : $"{duration.Minutes:00}:{duration.Seconds:00}";
+    }
+
+    private DateTimeOffset ToDateTimeOffset(DateTime localTime)
+    {
+        var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Unspecified);
+        return new DateTimeOffset(unspecified, AppTimeZone.GetUtcOffset(unspecified)).ToUniversalTime();
+    }
+
+    private TimeZoneInfo ResolveAppTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(SetupConfiguration.Current?.TimeZoneId ?? TimeZoneInfo.Local.Id);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.Local;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Local;
+        }
+    }
+
+    private static string StatusText(ExecutionStatus status) => status switch
+    {
+        ExecutionStatus.Queued => "待機中",
+        ExecutionStatus.Running => "実行中",
+        ExecutionStatus.Succeeded => "成功",
+        ExecutionStatus.Failed => "失敗",
+        ExecutionStatus.Skipped => "スキップ",
+        ExecutionStatus.TimedOut => "タイムアウト",
+        _ => status.ToString()
+    };
+
+    private static string StatusClass(ExecutionStatus status) => status switch
+    {
+        ExecutionStatus.Succeeded => "badge text-bg-success",
+        ExecutionStatus.Failed or ExecutionStatus.TimedOut => "badge text-bg-danger",
+        ExecutionStatus.Running => "badge text-bg-primary",
+        ExecutionStatus.Skipped => "badge text-bg-secondary",
+        _ => "badge text-bg-warning"
+    };
+
+    private static string GanttStatusClass(ExecutionStatus status) => status switch
+    {
+        ExecutionStatus.Succeeded => "gantt-status-succeeded",
+        ExecutionStatus.Failed => "gantt-status-failed",
+        ExecutionStatus.TimedOut => "gantt-status-timedout",
+        ExecutionStatus.Running => "gantt-status-running",
+        ExecutionStatus.Skipped => "gantt-status-skipped",
+        _ => "gantt-status-queued"
+    };
+
+    private sealed record RunTimelineRow(
+        int RunId,
+        string Name,
+        ExecutionStatus Status,
+        DateTimeOffset StartedAt,
+        DateTimeOffset? CompletedAt,
+        IReadOnlyList<JobTimelineRow> Jobs);
+
+    private sealed record JobTimelineRow(
+        string Name,
+        ExecutionStatus Status,
+        DateTimeOffset StartedAt,
+        DateTimeOffset? CompletedAt);
+}

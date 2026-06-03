@@ -1,0 +1,440 @@
+@page "/workflows/{WorkflowId:int}/schedule"
+@attribute [Authorize(Policy = AppPolicies.ManageWorkflows)]
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject NavigationManager Navigation
+@inject ISetupConfigurationStore SetupConfiguration
+@inject ILogger<WorkflowSchedule> Logger
+
+@* ワークフローの実行開始時刻、繰り返し、終了条件を設定する画面です。 *@
+<PageTitle>スケジュール設定</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>スケジュール設定</h1>
+        <p class="text-secondary mb-0">ワークフローをいつ起動するかを設定します。</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="workflows">ワークフロー一覧へ</a>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+}
+
+@if (workflow is null)
+{
+    <div class="alert alert-warning">対象のワークフローが見つかりません。</div>
+}
+else
+{
+    <div class="workflow-subnav mb-3">
+        <a href="@($"workflows/{WorkflowId}/tasks")">タスク登録</a>
+        <span>スケジュール設定</span>
+        <a href="@($"runs")">実行履歴</a>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <h2 class="h5">@workflow.Name</h2>
+            <dl class="row mb-0">
+                <dt class="col-sm-3">次回実行</dt>
+                <dd class="col-sm-9">@Format(workflow.NextRunAt)</dd>
+                <dt class="col-sm-3">現在の状態</dt>
+                <dd class="col-sm-9">@(workflow.ScheduleEnabled ? "有効" : "無効")</dd>
+            </dl>
+        </div>
+    </div>
+
+    <EditForm Model="schedule" OnValidSubmit="SaveAsync" FormName="workflowScheduleForm">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <h2 class="h5">基本設定</h2>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-check mt-4">
+                            <InputCheckbox class="form-check-input" @bind-Value="schedule.ScheduleEnabled" />
+                            <span class="form-check-label">スケジュールを有効にする</span>
+                        </label>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">開始日時（@TimeZoneDisplayName）</label>
+                        <input type="datetime-local" class="form-control" @bind="schedule.StartAtLocal" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">スケジュール種別</label>
+                        <InputSelect class="form-select" @bind-Value="schedule.ScheduleType">
+                            <option value="@ScheduleType.Once">一回のみ</option>
+                            <option value="@ScheduleType.Daily">毎日</option>
+                            <option value="@ScheduleType.Weekly">毎週</option>
+                            <option value="@ScheduleType.Monthly">毎月</option>
+                            <option value="@ScheduleType.IntervalMinutes">一定間隔</option>
+                        </InputSelect>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">有効期限</label>
+                        <input type="datetime-local" class="form-control" @bind="schedule.EndAtLocal" />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <h2 class="h5">繰り返し条件</h2>
+
+                @if (schedule.ScheduleType == ScheduleType.Once)
+                {
+                    <p class="text-secondary mb-0">開始日時に一度だけ起動します。下の「指定時間内で繰り返す」を有効にすると、開始日時から一定時間内で複数回起動できます。</p>
+                }
+
+                @if (schedule.ScheduleType == ScheduleType.Daily)
+                {
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">何日ごと</label>
+                            <InputNumber class="form-control" @bind-Value="schedule.EveryDays" />
+                        </div>
+                    </div>
+                }
+
+                @if (schedule.ScheduleType == ScheduleType.Weekly)
+                {
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">何週ごと</label>
+                            <InputNumber class="form-control" @bind-Value="schedule.EveryWeeks" />
+                        </div>
+                        <div class="col-md-9">
+                            <label class="form-label">実行曜日</label>
+                            <div class="d-flex flex-wrap gap-3">
+                                @foreach (var weekDay in weekDayOptions)
+                                {
+                                    <label class="form-check form-check-inline">
+                                        <InputCheckbox class="form-check-input" @bind-Value="weekDay.Value" />
+                                        <span class="form-check-label">@weekDay.Label</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (schedule.ScheduleType == ScheduleType.Monthly)
+                {
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">何か月ごと</label>
+                            <InputNumber class="form-control" @bind-Value="schedule.EveryMonths" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">実行日</label>
+                            <InputNumber class="form-control" @bind-Value="schedule.DayOfMonth" />
+                            <div class="form-text">29〜31日を指定し、該当日がない月は月末に起動します。</div>
+                        </div>
+                    </div>
+                }
+
+                @if (schedule.ScheduleType == ScheduleType.IntervalMinutes)
+                {
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">実行間隔（分）</label>
+                            <InputNumber class="form-control" @bind-Value="schedule.ScheduleIntervalMinutes" />
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <h2 class="h5">指定時間内で繰り返す</h2>
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-check mt-4">
+                            <InputCheckbox class="form-check-input" @bind-Value="schedule.RepeatEnabled" />
+                            <span class="form-check-label">繰り返しを有効にする</span>
+                        </label>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">繰り返し間隔（分）</label>
+                        <InputNumber class="form-control" @bind-Value="schedule.RepeatIntervalMinutes" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">継続時間（分）</label>
+                        <InputNumber class="form-control" @bind-Value="schedule.RepeatDurationMinutes" />
+                    </div>
+                </div>
+                <div class="form-text mt-2">
+                    例: 開始日時 9:00、繰り返し間隔 30 分、継続時間 180 分なら 9:00〜12:00 の範囲で起動します。
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary" type="submit">保存</button>
+            <a class="btn btn-outline-primary" href="@($"workflows/{WorkflowId}/tasks")">タスク登録へ</a>
+        </div>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public int WorkflowId { get; set; }
+
+    private readonly WeekDayDraft[] weekDayOptions =
+    [
+        new(DayOfWeek.Sunday, "日"),
+        new(DayOfWeek.Monday, "月"),
+        new(DayOfWeek.Tuesday, "火"),
+        new(DayOfWeek.Wednesday, "水"),
+        new(DayOfWeek.Thursday, "木"),
+        new(DayOfWeek.Friday, "金"),
+        new(DayOfWeek.Saturday, "土")
+    ];
+
+    private JobFlow? workflow;
+    private ScheduleDraft schedule = new();
+    private string? message;
+    private bool isError;
+
+    private TimeZoneInfo AppTimeZone => ResolveAppTimeZone();
+    private string TimeZoneDisplayName => AppTimeZone.DisplayName;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        workflow = await db.JobFlows.AsNoTracking().SingleOrDefaultAsync(item => item.Id == WorkflowId);
+        if (workflow is null)
+        {
+            return;
+        }
+
+        schedule = ScheduleDraft.From(workflow, AppTimeZone);
+        ApplyWeekDayMask(workflow.ScheduleDaysOfWeek);
+    }
+
+    private async Task SaveAsync()
+    {
+        Logger.LogInformation(
+            "スケジュール保存を開始しました。WorkflowId={WorkflowId}, ScheduleEnabled={ScheduleEnabled}, ScheduleType={ScheduleType}",
+            WorkflowId,
+            schedule.ScheduleEnabled,
+            schedule.ScheduleType);
+
+        if (!Validate())
+        {
+            Logger.LogWarning(
+                "スケジュール保存を中断しました。WorkflowId={WorkflowId}, ScheduleEnabled={ScheduleEnabled}, ScheduleType={ScheduleType}",
+                WorkflowId,
+                schedule.ScheduleEnabled,
+                schedule.ScheduleType);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.JobFlows.SingleAsync(item => item.Id == WorkflowId);
+
+        entity.ScheduleEnabled = schedule.ScheduleEnabled;
+        entity.ScheduleType = schedule.ScheduleType;
+        entity.ScheduledStartAt = schedule.ScheduleEnabled && schedule.StartAtLocal is DateTime start
+            ? ToDateTimeOffset(start)
+            : null;
+        entity.ScheduleEndAt = schedule.EndAtLocal is DateTime end
+            ? ToDateTimeOffset(end)
+            : null;
+        entity.ScheduleEveryDays = Math.Max(1, schedule.EveryDays);
+        entity.ScheduleEveryWeeks = Math.Max(1, schedule.EveryWeeks);
+        entity.ScheduleEveryMonths = Math.Max(1, schedule.EveryMonths);
+        entity.ScheduleDayOfMonth = schedule.ScheduleType == ScheduleType.Monthly
+            ? Math.Clamp(schedule.DayOfMonth ?? 1, 1, 31)
+            : null;
+        entity.ScheduleDaysOfWeek = schedule.ScheduleType == ScheduleType.Weekly
+            ? BuildWeekDayMask()
+            : 0;
+        entity.ScheduleIntervalMinutes = schedule.ScheduleType == ScheduleType.IntervalMinutes
+            ? schedule.ScheduleIntervalMinutes
+            : null;
+        entity.RepeatEnabled = schedule.RepeatEnabled;
+        entity.RepeatIntervalMinutes = schedule.RepeatEnabled ? schedule.RepeatIntervalMinutes : null;
+        entity.RepeatDurationMinutes = schedule.RepeatEnabled ? schedule.RepeatDurationMinutes : null;
+        entity.LastScheduledRunQueuedAt = null;
+        entity.NextRunAt = entity.ScheduleEnabled
+            ? ScheduleCalculator.CalculateNextRun(entity, DateTimeOffset.UtcNow, AppTimeZone)
+            : null;
+
+        await db.SaveChangesAsync();
+        Logger.LogInformation(
+            "スケジュールを保存しました。WorkflowId={WorkflowId}, ScheduleEnabled={ScheduleEnabled}, ScheduleType={ScheduleType}, NextRunAt={NextRunAt}",
+            WorkflowId,
+            entity.ScheduleEnabled,
+            entity.ScheduleType,
+            entity.NextRunAt);
+        ShowMessage("スケジュールを保存しました。");
+        await LoadAsync();
+    }
+
+    private bool Validate()
+    {
+        if (schedule.ScheduleEnabled && schedule.StartAtLocal is null)
+        {
+            ShowMessage("開始日時を指定してください。", true);
+            return false;
+        }
+
+        if (schedule.StartAtLocal is DateTime start && schedule.EndAtLocal is DateTime end && end <= start)
+        {
+            ShowMessage("有効期限は開始日時より後にしてください。", true);
+            return false;
+        }
+
+        if (schedule.ScheduleType == ScheduleType.Daily && schedule.EveryDays < 1)
+        {
+            ShowMessage("毎日の間隔は 1 日以上を指定してください。", true);
+            return false;
+        }
+
+        if (schedule.ScheduleType == ScheduleType.Weekly && (schedule.EveryWeeks < 1 || BuildWeekDayMask() == 0))
+        {
+            ShowMessage("毎週の間隔と実行曜日を指定してください。", true);
+            return false;
+        }
+
+        if (schedule.ScheduleType == ScheduleType.Monthly &&
+            (schedule.EveryMonths < 1 || schedule.DayOfMonth is null or < 1 or > 31))
+        {
+            ShowMessage("毎月の間隔と 1〜31 の実行日を指定してください。", true);
+            return false;
+        }
+
+        if (schedule.ScheduleType == ScheduleType.IntervalMinutes &&
+            schedule.ScheduleIntervalMinutes is null or < 1)
+        {
+            ShowMessage("一定間隔の実行間隔は 1 分以上を指定してください。", true);
+            return false;
+        }
+
+        if (schedule.RepeatEnabled &&
+            (schedule.RepeatIntervalMinutes is null or < 1 ||
+             schedule.RepeatDurationMinutes is null or < 1 ||
+             schedule.RepeatDurationMinutes < schedule.RepeatIntervalMinutes))
+        {
+            ShowMessage("繰り返し間隔と継続時間を正しく指定してください。継続時間は繰り返し間隔以上にしてください。", true);
+            return false;
+        }
+
+        return true;
+    }
+
+    private int BuildWeekDayMask()
+    {
+        var mask = 0;
+        foreach (var weekDay in weekDayOptions.Where(day => day.Value))
+        {
+            mask |= ScheduleCalculator.DayMask(weekDay.Day);
+        }
+
+        return mask;
+    }
+
+    private void ApplyWeekDayMask(int mask)
+    {
+        foreach (var weekDay in weekDayOptions)
+        {
+            weekDay.Value = mask != 0 && ScheduleCalculator.IncludesDay(mask, weekDay.Day);
+        }
+
+        if (mask == 0 && schedule.StartAtLocal is DateTime start)
+        {
+            weekDayOptions.Single(day => day.Day == start.DayOfWeek).Value = true;
+        }
+    }
+
+    private DateTimeOffset ToDateTimeOffset(DateTime localTime)
+    {
+        var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Unspecified);
+        return new DateTimeOffset(unspecified, AppTimeZone.GetUtcOffset(unspecified)).ToUniversalTime();
+    }
+
+    private string Format(DateTimeOffset? date) => date is null ? "-" : Format(date.Value);
+
+    private string Format(DateTimeOffset date) =>
+        TimeZoneInfo.ConvertTime(date, AppTimeZone).ToString("yyyy/MM/dd HH:mm:ss");
+
+    private TimeZoneInfo ResolveAppTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(SetupConfiguration.Current?.TimeZoneId ?? TimeZoneInfo.Local.Id);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.Local;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Local;
+        }
+    }
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+
+    private sealed class ScheduleDraft
+    {
+        public bool ScheduleEnabled { get; set; }
+        public DateTime? StartAtLocal { get; set; }
+        public DateTime? EndAtLocal { get; set; }
+        public ScheduleType ScheduleType { get; set; } = ScheduleType.Once;
+        public int EveryDays { get; set; } = 1;
+        public int EveryWeeks { get; set; } = 1;
+        public int EveryMonths { get; set; } = 1;
+        public int? DayOfMonth { get; set; } = 1;
+        public int? ScheduleIntervalMinutes { get; set; } = 60;
+        public bool RepeatEnabled { get; set; }
+        public int? RepeatIntervalMinutes { get; set; } = 60;
+        public int? RepeatDurationMinutes { get; set; } = 60;
+
+        public static ScheduleDraft From(JobFlow workflow, TimeZoneInfo timeZone)
+        {
+            var startLocal = workflow.ScheduledStartAt is DateTimeOffset start
+                ? TimeZoneInfo.ConvertTime(start, timeZone).DateTime
+                : TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow.AddMinutes(10), timeZone).DateTime;
+
+            return new()
+            {
+                ScheduleEnabled = workflow.ScheduleEnabled,
+                StartAtLocal = startLocal,
+                EndAtLocal = workflow.ScheduleEndAt is DateTimeOffset end
+                    ? TimeZoneInfo.ConvertTime(end, timeZone).DateTime
+                    : null,
+                ScheduleType = workflow.ScheduleType,
+                EveryDays = workflow.ScheduleEveryDays <= 0 ? 1 : workflow.ScheduleEveryDays,
+                EveryWeeks = workflow.ScheduleEveryWeeks <= 0 ? 1 : workflow.ScheduleEveryWeeks,
+                EveryMonths = workflow.ScheduleEveryMonths <= 0 ? 1 : workflow.ScheduleEveryMonths,
+                DayOfMonth = workflow.ScheduleDayOfMonth ?? startLocal.Day,
+                ScheduleIntervalMinutes = workflow.ScheduleIntervalMinutes ?? 60,
+                RepeatEnabled = workflow.RepeatEnabled,
+                RepeatIntervalMinutes = workflow.RepeatIntervalMinutes ?? 60,
+                RepeatDurationMinutes = workflow.RepeatDurationMinutes ?? 60
+            };
+        }
+    }
+
+    private sealed class WeekDayDraft(DayOfWeek day, string label)
+    {
+        public DayOfWeek Day { get; } = day;
+        public string Label { get; } = label;
+        public bool Value { get; set; }
+    }
+}

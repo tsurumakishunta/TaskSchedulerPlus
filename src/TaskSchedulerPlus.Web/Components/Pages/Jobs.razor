@@ -1,0 +1,13 @@
+@page "/jobs"
+@attribute [Authorize(Policy = AppPolicies.ManageWorkflows)]
+@inject NavigationManager Navigation
+
+@* 旧URLから現在のタスク登録画面へ誘導するための互換ページです。 *@
+<PageTitle>タスク登録</PageTitle>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Navigation.NavigateTo("workflows", replace: true);
+    }
+}

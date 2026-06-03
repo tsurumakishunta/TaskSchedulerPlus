@@ -1,0 +1,13 @@
+@page "/Account/Register"
+@attribute [Authorize(Policy = AppPolicies.ManageUsers)]
+
+@* Identity 既定の登録URLを、管理者向けユーザー管理画面へ案内するための画面です。 *@
+<PageTitle>ユーザー登録</PageTitle>
+
+<h1>ユーザー登録</h1>
+
+<div class="alert alert-info">
+    ユーザー登録は管理者専用のユーザー管理画面で行います。
+</div>
+
+<a class="btn btn-primary" href="users">ユーザー管理へ</a>

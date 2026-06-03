@@ -1,0 +1,185 @@
+@page "/Account/Login"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using TaskSchedulerPlus.Web.Data
+
+@inject SignInManager<ApplicationUser> SignInManager
+@inject ILogger<Login> Logger
+@inject IdentityRedirectManager RedirectManager
+
+@* ローカル Identity 認証でログインするための画面です。 *@
+<PageTitle>ログイン</PageTitle>
+
+<div class="login-shell">
+    <main class="login-card">
+        <div class="text-center mb-4">
+            <img class="login-logo mx-auto mb-3" src="task-scheduler-plus-icon.svg" alt="Task Scheduler Plus" />
+            <h1 class="h3 fw-normal mb-2">ログイン</h1>
+            <p class="text-secondary mb-0">ワークフロー運用管理システム</p>
+        </div>
+
+        @if (Initialized)
+        {
+            <div class="alert alert-success" role="alert">
+                初期設定が完了しました。初期管理者でログインしてください。
+            </div>
+        }
+
+        <StatusMessage Message="@errorMessage" />
+
+        <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-danger small" role="alert" />
+
+            <div class="form-floating mb-3">
+                <InputText @bind-Value="Input.Email"
+                           id="Input.Email"
+                           class="form-control"
+                           autocomplete="username"
+                           aria-required="true"
+                           placeholder="name@example.com" />
+                <label for="Input.Email">メールアドレス</label>
+                <ValidationMessage For="() => Input.Email" class="text-danger small" />
+            </div>
+
+            <div class="form-floating mb-3">
+                <InputText type="password"
+                           @bind-Value="Input.Password"
+                           id="Input.Password"
+                           class="form-control"
+                           autocomplete="current-password"
+                           aria-required="true"
+                           placeholder="パスワード" />
+                <label for="Input.Password">パスワード</label>
+                <ValidationMessage For="() => Input.Password" class="text-danger small" />
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <label class="form-check-label">
+                    <InputCheckbox @bind-Value="Input.RememberMe" class="form-check-input darker-border-checkbox me-1" />
+                    ログイン状態を保持する
+                </label>
+                <a class="small" href="Account/ForgotPassword">パスワードを忘れた場合</a>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 py-2">ログイン</button>
+        </EditForm>
+
+        <p class="mt-4 mb-0 text-center text-secondary small">
+            アカウントが必要な場合は管理者に依頼してください。
+        </p>
+    </main>
+</div>
+
+@code {
+    private string? errorMessage;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = new();
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery(Name = "initialized")]
+    private bool Initialized { get; set; }
+
+    public async Task LoginUser()
+    {
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        if (result.Succeeded)
+        {
+            var user = await SignInManager.UserManager.FindByEmailAsync(Input.Email);
+            IList<string> roles = user is null ? [] : await SignInManager.UserManager.GetRolesAsync(user);
+            Logger.LogInformation(
+                "ユーザーがログインしました。UserId={UserId}, Roles={Roles}, RememberMe={RememberMe}",
+                user?.Id ?? "unknown",
+                string.Join(",", roles),
+                Input.RememberMe);
+            RedirectManager.RedirectTo(ResolvePostLoginReturnUrl(ReturnUrl, roles));
+        }
+        else if (result.RequiresTwoFactor)
+        {
+            Logger.LogWarning("ログインを中断しました。Reason={Reason}", "二要素認証は未使用");
+            errorMessage = "二要素認証は現在このシステムでは使用できません。管理者へ連絡してください。";
+        }
+        else if (result.IsLockedOut)
+        {
+            Logger.LogWarning("ユーザーアカウントがロックされました。");
+            RedirectManager.RedirectTo("Account/Lockout");
+        }
+        else
+        {
+            Logger.LogWarning("ログインに失敗しました。Reason={Reason}", "認証失敗");
+            errorMessage = "メールアドレスまたはパスワードが正しくありません。";
+        }
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "メールアドレスを入力してください。")]
+        [EmailAddress(ErrorMessage = "メールアドレスの形式で入力してください。")]
+        public string Email { get; set; } = "";
+
+        [Required(ErrorMessage = "パスワードを入力してください。")]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [Display(Name = "ログイン状態を保持する")]
+        public bool RememberMe { get; set; }
+    }
+
+    private static string? ResolvePostLoginReturnUrl(string? returnUrl, IList<string> roles)
+    {
+        var path = NormalizeReturnPath(returnUrl);
+        if (string.IsNullOrWhiteSpace(path) ||
+            path.Equals("Account/AccessDenied", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Account/Login", StringComparison.OrdinalIgnoreCase) ||
+            path.Equals("Account/Logout", StringComparison.OrdinalIgnoreCase))
+        {
+            return "";
+        }
+
+        var isAdministrator = roles.Contains(AppRoles.Administrator);
+        var canManageWorkflows = isAdministrator || roles.Contains(AppRoles.GeneralUser);
+
+        if (path.Equals("users", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("users/", StringComparison.OrdinalIgnoreCase))
+        {
+            return isAdministrator ? returnUrl : "";
+        }
+
+        if (IsWorkflowManagementPath(path))
+        {
+            return canManageWorkflows ? returnUrl : "";
+        }
+
+        return returnUrl;
+    }
+
+    private static bool IsWorkflowManagementPath(string path) =>
+        path.Equals("jobs", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("jobs/", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("workflows", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("workflows/", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("flows", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("flows/", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeReturnPath(string? returnUrl)
+    {
+        if (string.IsNullOrWhiteSpace(returnUrl))
+        {
+            return "";
+        }
+
+        var value = returnUrl.Trim();
+        if (Uri.TryCreate(value, UriKind.Absolute, out var absoluteUri))
+        {
+            value = absoluteUri.PathAndQuery;
+        }
+
+        value = value.TrimStart('~').TrimStart('/');
+        var queryIndex = value.IndexOfAny(['?', '#']);
+        return queryIndex >= 0 ? value[..queryIndex] : value;
+    }
+}

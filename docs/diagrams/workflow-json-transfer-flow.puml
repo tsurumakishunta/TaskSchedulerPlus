@@ -1,0 +1,33 @@
+@startuml
+title ワークフローJSON入出力フロー
+
+actor "管理者" as Admin
+participant "AdminWorkflowJson.razor" as Page
+participant "WorkflowJsonTransferService" as Service
+database "SQL Server" as DB
+collections "JSONファイル" as JsonFile
+collections "ZIPファイル" as ZipFile
+
+== エクスポート ==
+Admin -> Page : キーワード検索
+Page -> Service : SearchWorkflowsAsync(keyword)
+Service -> DB : JobFlows を検索
+Service --> Page : ワークフロー一覧
+Admin -> Page : チェックしてZIP出力 / 全件出力
+Page -> Service : ExportSelectedZipAsync(ids) / ExportAllZipAsync()
+Service -> DB : JobFlows / JobNodes / JobDefinitions を取得
+Service -> Service : 実行履歴を除外してワークフロー単位のJSONをZIP化
+Service --> Page : ZIPバイト列とファイル名
+Page -> ZipFile : ブラウザーでダウンロード
+
+== インポート ==
+Admin -> Page : JSONファイルを選択
+Page -> Service : ImportAsync(json)
+Service -> Service : 形式検証
+Service -> Service : 同名ワークフローは別名化
+Service -> Service : タスクID重複時は再採番
+Service -> DB : JobFlows / JobNodes / JobDefinitions を追加
+Service --> Page : 取込件数
+Page --> Admin : 結果メッセージ表示
+
+@enduml

@@ -1,0 +1,197 @@
+@page "/"
+@attribute [Authorize(Policy = AppPolicies.ViewExecutionResults)]
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ISetupConfigurationStore SetupConfiguration
+@inject AuthenticationStateProvider AuthStateProvider
+
+@* ログイン後の入口として、ワークフローの状態と直近実行を確認するダッシュボードです。 *@
+<PageTitle>ダッシュボード</PageTitle>
+
+<h1>ワークフローダッシュボード</h1>
+
+<div class="row g-3 mb-4">
+    @if (canManageWorkflows)
+    {
+        <div class="col-md-3">
+            <div class="summary-card">
+                <span>タスク定義</span>
+                <strong>@jobCount</strong>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="summary-card">
+                <span>ワークフロー</span>
+                <strong>@flowCount</strong>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="summary-card">
+                <span>開始時間待ち</span>
+                <strong>@scheduledWaitingCount</strong>
+            </div>
+        </div>
+    }
+    <div class="col-md-3">
+        <div class="summary-card">
+            <span>失敗した実行</span>
+            <strong class="text-danger">@failedCount</strong>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h2 class="h4 mb-0">最近の実行</h2>
+    <AuthorizeView Policy="@AppPolicies.ManageWorkflows">
+        <Authorized>
+            <a class="btn btn-outline-primary" href="workflows">ワークフローを開く</a>
+        </Authorized>
+        <NotAuthorized>
+            <a class="btn btn-outline-primary" href="runs">実行履歴を開く</a>
+        </NotAuthorized>
+    </AuthorizeView>
+</div>
+
+@if (recentRuns.Count == 0)
+{
+    <p class="text-secondary">実行履歴はまだありません。</p>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-secondary">@DisplayRangeText</span>
+        <span class="text-secondary">1ページ最大 @PageSize 行</span>
+    </div>
+    <table class="table align-middle">
+        <thead>
+            <tr><th>ワークフロー</th><th>依頼日時</th><th>状態</th><th></th></tr>
+        </thead>
+        <tbody>
+            @foreach (var run in recentRuns)
+            {
+                <tr>
+                    <td>@run.JobFlow.Name</td>
+                    <td>@Format(run.RequestedAt)</td>
+                    <td><span class="@StatusClass(run.Status)">@StatusText(run.Status)</span></td>
+                    <td><a href="@($"runs/{run.Id}")">詳細</a></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    @if (totalPages > 1)
+    {
+        <nav aria-label="最近の実行ページ">
+            <ul class="pagination justify-content-end">
+                <li class="page-item @(currentPage <= 1 ? "disabled" : null)">
+                    <a class="page-link" href="@PageHref(currentPage - 1)">前へ</a>
+                </li>
+                @foreach (var pageNumber in VisiblePages)
+                {
+                    <li class="page-item @(pageNumber == currentPage ? "active" : null)">
+                        <a class="page-link" href="@PageHref(pageNumber)">@pageNumber</a>
+                    </li>
+                }
+                <li class="page-item @(currentPage >= totalPages ? "disabled" : null)">
+                    <a class="page-link" href="@PageHref(currentPage + 1)">次へ</a>
+                </li>
+            </ul>
+        </nav>
+    }
+}
+
+@code {
+    private const int PageSize = 100;
+
+    private int jobCount;
+    private int flowCount;
+    private int scheduledWaitingCount;
+    private int failedCount;
+    private int totalRuns;
+    private int totalPages = 1;
+    private int currentPage = 1;
+    private List<FlowRun> recentRuns = [];
+    private bool canManageWorkflows;
+
+    [SupplyParameterFromQuery(Name = "page")]
+    private int? RequestedPage { get; set; }
+
+    private string DisplayRangeText
+    {
+        get
+        {
+            if (totalRuns == 0)
+            {
+                return "0 件";
+            }
+
+            var first = ((currentPage - 1) * PageSize) + 1;
+            var last = Math.Min(currentPage * PageSize, totalRuns);
+            return $"全 {totalRuns} 件中 {first} - {last} 件を表示";
+        }
+    }
+
+    private IEnumerable<int> VisiblePages
+    {
+        get
+        {
+            var start = Math.Max(1, currentPage - 2);
+            var end = Math.Min(totalPages, currentPage + 2);
+            return Enumerable.Range(start, end - start + 1);
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var authenticationState = await AuthStateProvider.GetAuthenticationStateAsync();
+        canManageWorkflows = authenticationState.User.IsInRole(AppRoles.Administrator) ||
+            authenticationState.User.IsInRole(AppRoles.GeneralUser);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (canManageWorkflows)
+        {
+            jobCount = await db.JobDefinitions.CountAsync();
+            flowCount = await db.JobFlows.CountAsync();
+            scheduledWaitingCount = await db.JobFlows.CountAsync(flow =>
+                flow.ScheduleEnabled && flow.NextRunAt != null);
+        }
+
+        failedCount = await db.FlowRuns.CountAsync(run => run.Status == ExecutionStatus.Failed);
+        totalRuns = await db.FlowRuns.CountAsync();
+        totalPages = Math.Max(1, (int)Math.Ceiling(totalRuns / (double)PageSize));
+        currentPage = Math.Clamp(RequestedPage ?? 1, 1, totalPages);
+
+        recentRuns = await db.FlowRuns
+            .Include(run => run.JobFlow)
+            .OrderByDescending(run => run.RequestedAt)
+            .Skip((currentPage - 1) * PageSize)
+            .Take(PageSize)
+            .AsNoTracking()
+            .ToListAsync();
+    }
+
+    private static string PageHref(int page) => page <= 1 ? "/" : $"/?page={page}";
+
+    private string Format(DateTimeOffset date) =>
+        TimeZoneInfo.ConvertTime(date, TimeZoneInfo.FindSystemTimeZoneById(
+            SetupConfiguration.Current?.TimeZoneId ?? TimeZoneInfo.Local.Id)).ToString("yyyy/MM/dd HH:mm:ss");
+
+    private static string StatusText(ExecutionStatus status) => status switch
+    {
+        ExecutionStatus.Queued => "待機中",
+        ExecutionStatus.Running => "実行中",
+        ExecutionStatus.Succeeded => "成功",
+        ExecutionStatus.Failed => "失敗",
+        ExecutionStatus.Skipped => "スキップ",
+        ExecutionStatus.TimedOut => "タイムアウト",
+        _ => status.ToString()
+    };
+
+    private static string StatusClass(ExecutionStatus status) => status switch
+    {
+        ExecutionStatus.Succeeded => "badge text-bg-success",
+        ExecutionStatus.Failed or ExecutionStatus.TimedOut => "badge text-bg-danger",
+        ExecutionStatus.Running => "badge text-bg-primary",
+        ExecutionStatus.Skipped => "badge text-bg-secondary",
+        _ => "badge text-bg-warning"
+    };
+}

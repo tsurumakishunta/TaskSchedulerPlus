@@ -1,0 +1,51 @@
+@page "/admin/workflow-json"
+@attribute [Authorize(Roles = AppRoles.Administrator)]
+
+@* ワークフローJSONの入出力機能へ進むための入口画面です。 *@
+<PageTitle>ワークフローJSON入出力</PageTitle>
+
+<div class="settings-page">
+    <div class="settings-title">
+        <div>
+            <h1>ワークフローJSON入出力</h1>
+            <p class="text-secondary mb-0">
+                ワークフロー、スケジュール、タスク定義をJSONで入出力します。
+                実行履歴は環境ごとの運用結果であるため対象外です。
+            </p>
+        </div>
+    </div>
+
+    <section class="settings-section">
+        <div class="settings-section-heading">
+            <div>
+                <div class="settings-eyebrow">EXPORT</div>
+                <h2>エクスポート</h2>
+                <p>
+                    ワークフローを検索し、選択したワークフローまたは全件をZIPファイルとして出力します。
+                    ZIP内にはワークフローごとのJSONファイルを作成します。
+                </p>
+            </div>
+        </div>
+
+        <a class="btn btn-primary" href="admin/workflow-json/export">
+            エクスポート画面へ
+        </a>
+    </section>
+
+    <section class="settings-section">
+        <div class="settings-section-heading">
+            <div>
+                <div class="settings-eyebrow">IMPORT</div>
+                <h2>インポート</h2>
+                <p>
+                    エクスポート済みのJSONファイルから、ワークフローとタスク定義を取り込みます。
+                    同じワークフロー名がある場合は別名で登録します。
+                </p>
+            </div>
+        </div>
+
+        <a class="btn btn-outline-primary" href="admin/workflow-json/import">
+            インポート画面へ
+        </a>
+    </section>
+</div>

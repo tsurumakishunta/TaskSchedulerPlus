@@ -1,0 +1,157 @@
+@page "/setup"
+@attribute [AllowAnonymous]
+@inject InitialSetupService InitialSetup
+@inject InitialSetupState InitialSetupState
+@inject NavigationManager Navigation
+
+@* DB 接続先と初期管理者を登録し、初回起動時の設定を完了させる画面です。 *@
+<PageTitle>初期設定</PageTitle>
+
+<div class="setup-shell">
+    <div class="mb-4">
+        <p class="text-uppercase text-secondary small mb-1">初期設定</p>
+        <h1>ワークフロー管理システムの初期設定</h1>
+        <p class="text-secondary">
+            SQL Server の接続先と最初の管理者を設定します。接続情報はこのサーバーの暗号化キーで保護して保存されます。
+        </p>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="alert @(failed ? "alert-danger" : "alert-success")">@message</div>
+    }
+
+    <EditForm Model="model" OnValidSubmit="CompleteSetupAsync" FormName="initialSetup">
+        <DataAnnotationsValidator />
+        <ValidationSummary class="text-danger" />
+
+        <section class="card mb-4">
+            <div class="card-body">
+                <h2 class="h5">システム設定</h2>
+                <div class="row g-3">
+                    <div class="col-md-7">
+                        <label class="form-label">システム名</label>
+                        <InputText class="form-control" @bind-Value="model.ApplicationName" />
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">タイムゾーン</label>
+                        <InputSelect class="form-select" @bind-Value="model.TimeZoneId">
+                            @foreach (var zone in timeZones)
+                            {
+                                <option value="@zone.Id">@zone.DisplayName</option>
+                            }
+                        </InputSelect>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card mb-4">
+            <div class="card-body">
+                <h2 class="h5">SQL Server 接続先</h2>
+                <div class="row g-3">
+                    <div class="col-md-7">
+                        <label class="form-label">サーバー名 / インスタンス名</label>
+                        <InputText class="form-control" @bind-Value="model.ServerName" />
+                        <div class="form-text">例: <code>SERVER01</code>、<code>SERVER01\SQLEXPRESS</code>、<code>(localdb)\MSSQLLocalDB</code></div>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">データベース名</label>
+                        <InputText class="form-control" @bind-Value="model.DatabaseName" />
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">認証方式</label>
+                        <InputSelect class="form-select" @bind-Value="model.AuthenticationMode">
+                            <option value="@DatabaseAuthenticationMode.Windows">Windows 統合認証</option>
+                            <option value="@DatabaseAuthenticationMode.SqlServer">SQL Server 認証</option>
+                        </InputSelect>
+                    </div>
+                    @if (model.AuthenticationMode == DatabaseAuthenticationMode.SqlServer)
+                    {
+                        <div class="col-md-3">
+                            <label class="form-label">DB ユーザー名</label>
+                            <InputText class="form-control" @bind-Value="model.DatabaseUserName" autocomplete="username" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">DB パスワード</label>
+                            <InputText type="password" class="form-control" @bind-Value="model.DatabasePassword" autocomplete="current-password" />
+                        </div>
+                    }
+                    <div class="col-md-12">
+                        <label class="form-check form-check-inline">
+                            <InputCheckbox class="form-check-input" @bind-Value="model.EncryptConnection" />
+                            接続を暗号化
+                        </label>
+                        <label class="form-check form-check-inline">
+                            <InputCheckbox class="form-check-input" @bind-Value="model.TrustServerCertificate" />
+                            サーバー証明書を信頼
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card mb-4">
+            <div class="card-body">
+                <h2 class="h5">初期管理者</h2>
+                <p class="text-secondary">このユーザーがワークフロー、スケジュール、タスクを管理します。パスワードはデータベースにハッシュとして保存されます。</p>
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <label class="form-label">メールアドレス</label>
+                        <InputText class="form-control" @bind-Value="model.AdministratorEmail" autocomplete="username" />
+                    </div>
+                    <div class="col-md-7"></div>
+                    <div class="col-md-5">
+                        <label class="form-label">パスワード</label>
+                        <InputText type="password" class="form-control" @bind-Value="model.AdministratorPassword" autocomplete="new-password" />
+                        <div class="form-text">10 文字以上。英大文字・英小文字・数字・記号を含めてください。</div>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">パスワード確認</label>
+                        <InputText type="password" class="form-control" @bind-Value="model.ConfirmAdministratorPassword" autocomplete="new-password" />
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <button class="btn btn-primary btn-lg" type="submit" disabled="@isSubmitting">
+            @(isSubmitting ? "初期化しています..." : "接続確認して初期設定を完了")
+        </button>
+    </EditForm>
+</div>
+
+@code {
+    private readonly InitialSetupRequest model = new();
+    private readonly IReadOnlyList<TimeZoneInfo> timeZones = TimeZoneInfo.GetSystemTimeZones();
+    private string? message;
+    private bool failed;
+    private bool isSubmitting;
+
+    protected override void OnInitialized()
+    {
+        if (!InitialSetupState.IsRequired)
+        {
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+    }
+
+    private async Task CompleteSetupAsync()
+    {
+        isSubmitting = true;
+        message = null;
+        try
+        {
+            var result = await InitialSetup.CompleteAsync(model);
+            failed = !result.Succeeded;
+            message = result.Message;
+            if (result.Succeeded)
+            {
+                Navigation.NavigateTo("/Account/Login?initialized=true", forceLoad: true);
+            }
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+}

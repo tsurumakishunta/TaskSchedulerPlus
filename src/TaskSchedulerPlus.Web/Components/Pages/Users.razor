@@ -1,0 +1,517 @@
+@page "/users"
+@attribute [Authorize(Policy = AppPolicies.ManageUsers)]
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthStateProvider
+@inject ILogger<Users> Logger
+
+@* 管理者がユーザー一覧を確認し、権限変更や削除を行う画面です。 *@
+<PageTitle>ユーザー管理</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>ユーザー管理</h1>
+        <p class="text-secondary mb-0">ユーザーの追加、権限変更、パスワード更新、削除を管理者だけが行えます。</p>
+    </div>
+    @if (selectedUser is null)
+    {
+        <a class="btn btn-primary" href="users/create">ユーザー追加</a>
+    }
+    else
+    {
+        <button class="btn btn-outline-secondary" type="button" @onclick="ClearSelection">一覧へ戻る</button>
+    }
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+}
+
+<div class="row g-4">
+    @if (selectedUser is not null)
+    {
+        <div class="col-xl-6 col-lg-8">
+            <section>
+                <h2 class="h4 mb-3 pb-2 border-bottom">ユーザー更新</h2>
+                <EditForm Model="editUser" OnValidSubmit="UpdateUserAsync" FormName="editUserForm">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-danger" />
+
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label">メールアドレス</label>
+                            <InputText class="form-control" @bind-Value="editUser.Email" autocomplete="username" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">権限</label>
+                            <InputSelect class="form-select" @bind-Value="editUser.Role">
+                                @foreach (var role in RoleOptions)
+                                {
+                                    <option value="@role.Value">@role.Label</option>
+                                }
+                            </InputSelect>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">新しいパスワード</label>
+                            <InputText type="password" class="form-control" @bind-Value="editUser.NewPassword" autocomplete="new-password" />
+                            <div class="form-text">変更しない場合は空欄にしてください。</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">新しいパスワード確認</label>
+                            <InputText type="password" class="form-control" @bind-Value="editUser.ConfirmNewPassword" autocomplete="new-password" />
+                        </div>
+                        <div class="col-12 d-flex gap-2">
+                            <button class="btn btn-primary" type="submit">更新</button>
+                            <button class="btn btn-outline-secondary" type="button" @onclick="ClearSelection">一覧へ戻る</button>
+                        </div>
+                    </div>
+                </EditForm>
+            </section>
+        </div>
+    }
+    else
+    {
+        <div class="col-12">
+            <section>
+                <h2 class="h4 mb-3 pb-2 border-bottom">ユーザー一覧</h2>
+                @if (users.Count == 0)
+                {
+                    <p class="text-secondary mb-0">ユーザーは登録されていません。</p>
+                }
+                else
+                {
+                    <table class="table align-middle">
+                        <thead>
+                            <tr>
+                                <th>メールアドレス</th>
+                                <th>権限</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var user in users)
+                            {
+                                <tr>
+                                    <td>
+                                        @user.Email
+                                        @if (user.Id == currentUserId)
+                                        {
+                                            <span class="badge text-bg-info ms-2">ログイン中</span>
+                                        }
+                                    </td>
+                                    <td>@user.RoleDisplay</td>
+                                    <td class="text-end">
+                                        <button class="btn btn-sm btn-outline-primary" type="button" @onclick="() => SelectUserAsync(user.Id)">編集</button>
+                                        <button class="btn btn-sm btn-outline-danger ms-1" type="button" @onclick="() => RequestDeleteUserAsync(user.Id)" disabled="@(user.Id == currentUserId)">削除</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </section>
+        </div>
+    }
+</div>
+
+<DeleteConfirmationModal IsOpen="@deleteUserModalOpen"
+                         Title="ユーザー削除確認"
+                         Message="@deleteUserMessage"
+                         Detail="@deleteUserDetail"
+                         IsProcessing="@deleteUserProcessing"
+                         OnConfirm="ConfirmDeleteUserAsync"
+                         OnCancel="CancelDeleteUser" />
+
+@code {
+    private static readonly RoleOption[] RoleOptions =
+    [
+        new(AppRoles.Administrator, AppRoles.DisplayName(AppRoles.Administrator)),
+        new(AppRoles.GeneralUser, AppRoles.DisplayName(AppRoles.GeneralUser)),
+        new(AppRoles.Viewer, AppRoles.DisplayName(AppRoles.Viewer))
+    ];
+
+    private UserEditEditor editUser = new();
+    private List<UserRow> users = [];
+    private UserRow? selectedUser;
+    private string? currentUserId;
+    private string? message;
+    private bool isError;
+    private bool deleteUserModalOpen;
+    private bool deleteUserProcessing;
+    private string? pendingDeleteUserId;
+    private string deleteUserMessage = "ユーザーを削除しますか。";
+    private string? deleteUserDetail;
+
+    [SupplyParameterFromQuery(Name = "created")]
+    private bool Created { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authenticationState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentUserId = UserManager.GetUserId(authenticationState.User);
+        await LoadUsersAsync();
+        if (Created)
+        {
+            ShowMessage("ユーザーを追加しました。");
+        }
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        var identityUsers = await UserManager.Users
+            .OrderBy(user => user.Email)
+            .ToListAsync();
+
+        var rows = new List<UserRow>();
+        foreach (var user in identityUsers)
+        {
+            var roles = await UserManager.GetRolesAsync(user);
+            var role = roles.FirstOrDefault(AppRoles.All.Contains) ?? string.Empty;
+            rows.Add(new UserRow(user.Id, user.Email ?? user.UserName ?? string.Empty, role));
+        }
+
+        users = rows;
+        if (selectedUser is not null)
+        {
+            selectedUser = users.SingleOrDefault(user => user.Id == selectedUser.Id);
+        }
+    }
+
+    private async Task SelectUserAsync(string userId)
+    {
+        var user = await UserManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            ShowMessage("対象のユーザーが見つかりません。", true);
+            await LoadUsersAsync();
+            return;
+        }
+
+        var roles = await UserManager.GetRolesAsync(user);
+        var role = roles.FirstOrDefault(AppRoles.All.Contains) ?? AppRoles.Viewer;
+        selectedUser = new UserRow(user.Id, user.Email ?? user.UserName ?? string.Empty, role);
+        editUser = new UserEditEditor
+        {
+            Email = selectedUser.Email,
+            Role = role
+        };
+        message = null;
+        isError = false;
+    }
+
+    private async Task UpdateUserAsync()
+    {
+        if (selectedUser is null)
+        {
+            Logger.LogWarning("ユーザー更新を中断しました。Reason={Reason}", "選択ユーザーなし");
+            return;
+        }
+
+        var passwordChanged = !string.IsNullOrWhiteSpace(editUser.NewPassword);
+        Logger.LogInformation(
+            "ユーザー更新を開始しました。TargetUserId={TargetUserId}, RequestedRole={RequestedRole}, PasswordChanged={PasswordChanged}",
+            selectedUser.Id,
+            NormalizeRole(editUser.Role),
+            passwordChanged);
+
+        var user = await UserManager.FindByIdAsync(selectedUser.Id);
+        if (user is null)
+        {
+            Logger.LogWarning(
+                "ユーザー更新を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                selectedUser.Id,
+                "対象なし");
+            ShowMessage("対象のユーザーが見つかりません。", true);
+            ClearSelection();
+            await LoadUsersAsync();
+            return;
+        }
+
+        var email = editUser.Email.Trim();
+        var existingUser = await UserManager.FindByEmailAsync(email);
+        if (existingUser is not null && existingUser.Id != user.Id)
+        {
+            Logger.LogWarning(
+                "ユーザー更新を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                user.Id,
+                "メールアドレス重複");
+            ShowMessage("同じメールアドレスのユーザーが既に存在します。", true);
+            return;
+        }
+
+        var nextRole = NormalizeRole(editUser.Role);
+        var currentRoles = await UserManager.GetRolesAsync(user);
+        var isAdministrator = currentRoles.Contains(AppRoles.Administrator);
+        if (user.Id == currentUserId && nextRole != AppRoles.Administrator)
+        {
+            Logger.LogWarning(
+                "ユーザー更新を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                user.Id,
+                "自分自身の管理者権限解除");
+            ShowMessage("ログイン中の自分自身から管理者権限を外すことはできません。", true);
+            return;
+        }
+
+        if (isAdministrator && nextRole != AppRoles.Administrator && await AdministratorCountAsync() <= 1)
+        {
+            Logger.LogWarning(
+                "ユーザー更新を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                user.Id,
+                "最後の管理者権限変更");
+            ShowMessage("最後の管理者の権限は変更できません。", true);
+            return;
+        }
+
+        if (!string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+        {
+            var emailResult = await UserManager.SetEmailAsync(user, email);
+            if (!emailResult.Succeeded)
+            {
+                ShowIdentityErrors("メールアドレスの更新に失敗しました", emailResult);
+                return;
+            }
+
+            var userNameResult = await UserManager.SetUserNameAsync(user, email);
+            if (!userNameResult.Succeeded)
+            {
+                ShowIdentityErrors("ユーザー名の更新に失敗しました", userNameResult);
+                return;
+            }
+
+            user.EmailConfirmed = true;
+            var updateResult = await UserManager.UpdateAsync(user);
+            if (!updateResult.Succeeded)
+            {
+                ShowIdentityErrors("ユーザー情報の更新に失敗しました", updateResult);
+                return;
+            }
+        }
+
+        if (currentRoles.Count > 0)
+        {
+            var removeResult = await UserManager.RemoveFromRolesAsync(user, currentRoles);
+            if (!removeResult.Succeeded)
+            {
+                ShowIdentityErrors("既存権限の削除に失敗しました", removeResult);
+                return;
+            }
+        }
+
+        var addRoleResult = await UserManager.AddToRoleAsync(user, nextRole);
+        if (!addRoleResult.Succeeded)
+        {
+            ShowIdentityErrors("権限の更新に失敗しました", addRoleResult);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(editUser.NewPassword))
+        {
+            var token = await UserManager.GeneratePasswordResetTokenAsync(user);
+            var passwordResult = await UserManager.ResetPasswordAsync(user, token, editUser.NewPassword);
+            if (!passwordResult.Succeeded)
+            {
+                ShowIdentityErrors("パスワードの更新に失敗しました", passwordResult);
+                return;
+            }
+        }
+
+        editUser.NewPassword = string.Empty;
+        editUser.ConfirmNewPassword = string.Empty;
+        await LoadUsersAsync();
+        await SelectUserAsync(user.Id);
+        Logger.LogInformation(
+            "ユーザーを更新しました。TargetUserId={TargetUserId}, Role={Role}, PasswordChanged={PasswordChanged}",
+            user.Id,
+            nextRole,
+            passwordChanged);
+        ShowMessage("ユーザーを更新しました。");
+    }
+
+    private async Task RequestDeleteUserAsync(string userId)
+    {
+        if (userId == currentUserId)
+        {
+            Logger.LogWarning(
+                "ユーザー削除要求を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                userId,
+                "自分自身");
+            ShowMessage("ログイン中の自分自身は削除できません。", true);
+            return;
+        }
+
+        var user = await UserManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            Logger.LogWarning(
+                "ユーザー削除要求を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                userId,
+                "対象なし");
+            ShowMessage("対象のユーザーが見つかりません。", true);
+            await LoadUsersAsync();
+            return;
+        }
+
+        var roles = await UserManager.GetRolesAsync(user);
+        if (roles.Contains(AppRoles.Administrator) && await AdministratorCountAsync() <= 1)
+        {
+            Logger.LogWarning(
+                "ユーザー削除要求を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                userId,
+                "最後の管理者");
+            ShowMessage("最後の管理者は削除できません。", true);
+            return;
+        }
+
+        Logger.LogInformation(
+            "ユーザー削除確認を表示します。TargetUserId={TargetUserId}, Roles={Roles}",
+            userId,
+            string.Join(",", roles));
+        pendingDeleteUserId = userId;
+        deleteUserMessage = $"ユーザー「{user.Email ?? user.UserName}」を削除しますか。";
+        deleteUserDetail = "この操作は元に戻せません。";
+        deleteUserModalOpen = true;
+    }
+
+    private async Task ConfirmDeleteUserAsync()
+    {
+        if (string.IsNullOrWhiteSpace(pendingDeleteUserId))
+        {
+            CancelDeleteUser();
+            return;
+        }
+
+        deleteUserProcessing = true;
+        try
+        {
+            await DeleteUserAsync(pendingDeleteUserId);
+        }
+        finally
+        {
+            deleteUserProcessing = false;
+            CancelDeleteUser();
+        }
+    }
+
+    private void CancelDeleteUser()
+    {
+        deleteUserModalOpen = false;
+        pendingDeleteUserId = null;
+        deleteUserMessage = "ユーザーを削除しますか。";
+        deleteUserDetail = null;
+    }
+
+    private async Task DeleteUserAsync(string userId)
+    {
+        if (userId == currentUserId)
+        {
+            Logger.LogWarning(
+                "ユーザー削除を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                userId,
+                "自分自身");
+            ShowMessage("ログイン中の自分自身は削除できません。", true);
+            return;
+        }
+
+        Logger.LogWarning(
+            "ユーザー削除を開始しました。TargetUserId={TargetUserId}",
+            userId);
+
+        var user = await UserManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            Logger.LogWarning(
+                "ユーザー削除を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                userId,
+                "対象なし");
+            ShowMessage("対象のユーザーが見つかりません。", true);
+            await LoadUsersAsync();
+            return;
+        }
+
+        var roles = await UserManager.GetRolesAsync(user);
+        if (roles.Contains(AppRoles.Administrator) && await AdministratorCountAsync() <= 1)
+        {
+            Logger.LogWarning(
+                "ユーザー削除を中断しました。TargetUserId={TargetUserId}, Reason={Reason}",
+                userId,
+                "最後の管理者");
+            ShowMessage("最後の管理者は削除できません。", true);
+            return;
+        }
+
+        var result = await UserManager.DeleteAsync(user);
+        if (!result.Succeeded)
+        {
+            Logger.LogWarning(
+                "ユーザー削除に失敗しました。TargetUserId={TargetUserId}, ErrorCount={ErrorCount}",
+                userId,
+                result.Errors.Count());
+            ShowIdentityErrors("ユーザーの削除に失敗しました", result);
+            return;
+        }
+
+        if (selectedUser?.Id == userId)
+        {
+            ClearSelection();
+        }
+
+        await LoadUsersAsync();
+        Logger.LogWarning(
+            "ユーザーを削除しました。TargetUserId={TargetUserId}, Roles={Roles}",
+            userId,
+            string.Join(",", roles));
+        ShowMessage("ユーザーを削除しました。");
+    }
+
+    private void ClearSelection()
+    {
+        selectedUser = null;
+        editUser = new UserEditEditor();
+        message = null;
+        isError = false;
+    }
+
+    private async Task<int> AdministratorCountAsync()
+    {
+        var administrators = await UserManager.GetUsersInRoleAsync(AppRoles.Administrator);
+        return administrators.Count;
+    }
+
+    private static string NormalizeRole(string role) =>
+        AppRoles.All.Contains(role) ? role : AppRoles.Viewer;
+
+    private void ShowIdentityErrors(string prefix, IdentityResult result) =>
+        ShowMessage($"{prefix}: {string.Join(" / ", result.Errors.Select(error => error.Description))}", true);
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+
+    private sealed record RoleOption(string Value, string Label);
+
+    private sealed record UserRow(string Id, string Email, string Role)
+    {
+        public string RoleDisplay => string.IsNullOrWhiteSpace(Role) ? "未設定" : AppRoles.DisplayName(Role);
+    }
+
+    private sealed class UserEditEditor
+    {
+        [Required(ErrorMessage = "メールアドレスを入力してください。")]
+        [EmailAddress(ErrorMessage = "メールアドレスの形式で入力してください。")]
+        public string Email { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "権限を選択してください。")]
+        public string Role { get; set; } = AppRoles.Viewer;
+
+        [StringLength(100, ErrorMessage = "新しいパスワードは {2} 文字以上 {1} 文字以内で入力してください。", MinimumLength = 10)]
+        [DataType(DataType.Password)]
+        public string? NewPassword { get; set; }
+
+        [DataType(DataType.Password)]
+        [Compare(nameof(NewPassword), ErrorMessage = "新しいパスワードと確認用パスワードが一致しません。")]
+        public string? ConfirmNewPassword { get; set; }
+    }
+}

@@ -1,0 +1,184 @@
+@page "/users/create"
+@attribute [Authorize(Policy = AppPolicies.ManageUsers)]
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<ApplicationUser> UserManager
+@inject NavigationManager Navigation
+@inject ILogger<UserCreate> Logger
+
+@* 管理者が新しいログインユーザーを作成する画面です。 *@
+<PageTitle>ユーザー追加</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>ユーザー追加</h1>
+        <p class="text-secondary mb-0">メールアドレス、権限、初期パスワードを入力してユーザーを追加します。</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="users">一覧へ戻る</a>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+}
+
+<section>
+    <h2 class="h4 mb-3 pb-2 border-bottom">ユーザー情報</h2>
+    <EditForm Model="newUser" OnValidSubmit="CreateUserAsync" FormName="createUserForm">
+        <DataAnnotationsValidator />
+        <ValidationSummary class="text-danger" />
+
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label">メールアドレス</label>
+                <InputText class="form-control" @bind-Value="newUser.Email" autocomplete="username" />
+                <ValidationMessage For="() => newUser.Email" class="text-danger" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">権限</label>
+                <InputSelect class="form-select" @bind-Value="newUser.Role">
+                    @foreach (var role in RoleOptions)
+                    {
+                        <option value="@role.Value">@role.Label</option>
+                    }
+                </InputSelect>
+                <ValidationMessage For="() => newUser.Role" class="text-danger" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">パスワード</label>
+                <InputText type="password" class="form-control" @bind-Value="newUser.Password" autocomplete="new-password" />
+                <div class="form-text">10 文字以上。英大文字・英小文字・数字・記号を含めてください。</div>
+                <ValidationMessage For="() => newUser.Password" class="text-danger" />
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">パスワード確認</label>
+                <InputText type="password" class="form-control" @bind-Value="newUser.ConfirmPassword" autocomplete="new-password" />
+                <ValidationMessage For="() => newUser.ConfirmPassword" class="text-danger" />
+            </div>
+        </div>
+
+        <hr class="my-4" />
+
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary" type="submit" disabled="@isSubmitting">
+                @(isSubmitting ? "追加しています..." : "追加")
+            </button>
+            <a class="btn btn-outline-secondary" href="users">キャンセル</a>
+        </div>
+    </EditForm>
+</section>
+
+@code {
+    private static readonly RoleOption[] RoleOptions =
+    [
+        new(AppRoles.Administrator, AppRoles.DisplayName(AppRoles.Administrator)),
+        new(AppRoles.GeneralUser, AppRoles.DisplayName(AppRoles.GeneralUser)),
+        new(AppRoles.Viewer, AppRoles.DisplayName(AppRoles.Viewer))
+    ];
+
+    private readonly UserCreateEditor newUser = new() { Role = AppRoles.Viewer };
+    private string? message;
+    private bool isError;
+    private bool isSubmitting;
+
+    private async Task CreateUserAsync()
+    {
+        isSubmitting = true;
+        message = null;
+        isError = false;
+
+        try
+        {
+            var email = newUser.Email.Trim();
+            var role = NormalizeRole(newUser.Role);
+            Logger.LogInformation(
+                "ユーザー追加を開始しました。Role={Role}",
+                role);
+
+            if (await UserManager.FindByEmailAsync(email) is not null)
+            {
+                Logger.LogWarning(
+                    "ユーザー追加を中断しました。Reason={Reason}, Role={Role}",
+                    "メールアドレス重複",
+                    role);
+                ShowMessage("同じメールアドレスのユーザーが既に存在します。", true);
+                return;
+            }
+
+            var user = new ApplicationUser
+            {
+                UserName = email,
+                Email = email,
+                EmailConfirmed = true
+            };
+
+            var createResult = await UserManager.CreateAsync(user, newUser.Password);
+            if (!createResult.Succeeded)
+            {
+                Logger.LogWarning(
+                    "ユーザー追加に失敗しました。Step={Step}, Role={Role}, ErrorCount={ErrorCount}",
+                    "CreateUser",
+                    role,
+                    createResult.Errors.Count());
+                ShowIdentityErrors("ユーザーの追加に失敗しました", createResult);
+                return;
+            }
+
+            var roleResult = await UserManager.AddToRoleAsync(user, role);
+            if (!roleResult.Succeeded)
+            {
+                await UserManager.DeleteAsync(user);
+                Logger.LogWarning(
+                    "ユーザー追加に失敗しました。Step={Step}, UserId={UserId}, Role={Role}, ErrorCount={ErrorCount}",
+                    "AddRole",
+                    user.Id,
+                    role,
+                    roleResult.Errors.Count());
+                ShowIdentityErrors("ユーザーの権限設定に失敗しました", roleResult);
+                return;
+            }
+
+            Logger.LogInformation(
+                "ユーザーを追加しました。UserId={UserId}, Role={Role}",
+                user.Id,
+                role);
+            Navigation.NavigateTo("users?created=true");
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private static string NormalizeRole(string role) =>
+        AppRoles.All.Contains(role) ? role : AppRoles.Viewer;
+
+    private void ShowIdentityErrors(string prefix, IdentityResult result) =>
+        ShowMessage($"{prefix}: {string.Join(" / ", result.Errors.Select(error => error.Description))}", true);
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+
+    private sealed record RoleOption(string Value, string Label);
+
+    private sealed class UserCreateEditor
+    {
+        [Required(ErrorMessage = "メールアドレスを入力してください。")]
+        [EmailAddress(ErrorMessage = "メールアドレスの形式で入力してください。")]
+        public string Email { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "権限を選択してください。")]
+        public string Role { get; set; } = AppRoles.Viewer;
+
+        [Required(ErrorMessage = "パスワードを入力してください。")]
+        [StringLength(100, ErrorMessage = "パスワードは {2} 文字以上 {1} 文字以内で入力してください。", MinimumLength = 10)]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = string.Empty;
+
+        [DataType(DataType.Password)]
+        [Compare(nameof(Password), ErrorMessage = "パスワードと確認用パスワードが一致しません。")]
+        public string ConfirmPassword { get; set; } = string.Empty;
+    }
+}

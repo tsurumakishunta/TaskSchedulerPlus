@@ -1,0 +1,326 @@
+@page "/parameters"
+@attribute [Authorize(Policy = AppPolicies.ManageUsers)]
+@using System.Text.Encodings.Web
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using Microsoft.AspNetCore.Identity
+@inject ParameterFileStore ParameterFiles
+@inject ParameterEmailSender EmailSender
+@inject UserManager<ApplicationUser> UserManager
+@inject AuthenticationStateProvider AuthStateProvider
+
+@* Parameter フォルダにある rds.json と mail.json を管理者向けに参照表示する画面です。 *@
+@{
+    var rdsFile = ParameterFiles.ReadRdsSnapshot();
+    var mailFile = ParameterFiles.ReadMailSnapshot();
+    var rds = ParameterFiles.ReadRdsParameter();
+    var mail = ParameterFiles.ReadMailParameter();
+}
+
+<PageTitle>パラメーター参照</PageTitle>
+
+<div class="settings-page">
+    <div class="settings-title">
+        <div>
+            <h1>システム設定</h1>
+            <p class="text-secondary mb-0">
+                初期設定で作成された接続情報と、メール送信で使用する設定情報を参照します。この画面は管理者のみ表示できます。
+            </p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(testMailMessage))
+    {
+        <div class="alert @(testMailIsError ? "alert-danger" : "alert-success")" role="alert">
+            @testMailMessage
+        </div>
+    }
+
+    <section class="settings-section">
+        <div class="settings-section-heading">
+            <div>
+                <div class="settings-eyebrow">DATABASE</div>
+                <h2>データベース接続</h2>
+                <p>SQL Server 接続に使用する最小限の設定です。</p>
+            </div>
+            <span class="badge @(rdsFile.Exists ? "text-bg-success" : "text-bg-warning")">
+                @(rdsFile.Exists ? "作成済み" : "未作成")
+            </span>
+        </div>
+
+        <dl class="settings-list">
+            <dt>JSONパス</dt>
+            <dd><code>@rdsFile.FullPath</code></dd>
+
+            <dt>ファイル名</dt>
+            <dd>@rdsFile.FileName</dd>
+
+            <dt>Provider</dt>
+            <dd>@DisplayValue(rds.Provider)</dd>
+
+            <dt>ConnectionString</dt>
+            <dd>
+                <div class="settings-secret-row">
+                    <code class="settings-code">@DisplaySecretValue(rds.ConnectionString, showConnectionString)</code>
+                    @if (!string.IsNullOrWhiteSpace(rds.ConnectionString))
+                    {
+                        <button class="btn btn-sm btn-outline-secondary"
+                                type="button"
+                                aria-pressed="@showConnectionString"
+                                @onclick="ToggleConnectionStringVisibility">
+                            @(showConnectionString ? "非表示" : "表示")
+                        </button>
+                    }
+                </div>
+            </dd>
+        </dl>
+
+        <details class="settings-json">
+            <summary>元のJSONを表示</summary>
+            <pre class="parameter-json">@DisplayRdsJson(rdsFile)</pre>
+        </details>
+    </section>
+
+    <section class="settings-section">
+        <div class="settings-section-heading">
+            <div>
+                <div class="settings-eyebrow">MAIL</div>
+                <h2>メール送信</h2>
+                <p>パスワードリセットなど、通知メールで使用する設定です。</p>
+            </div>
+            <div class="d-flex flex-column align-items-end gap-2">
+                <span class="badge @(mailFile.Exists ? "text-bg-success" : "text-bg-warning")">
+                    @(mailFile.Exists ? "作成済み" : "未作成")
+                </span>
+                <button class="btn btn-sm btn-outline-primary"
+                        type="button"
+                        disabled="@(!CanSendTestMail(mail))"
+                        title="@TestMailButtonTitle(mail)"
+                        @onclick="RequestSendTestMail">
+                    テストメール送信
+                </button>
+            </div>
+        </div>
+
+        <dl class="settings-list">
+            <dt>JSONパス</dt>
+            <dd><code>@mailFile.FullPath</code></dd>
+
+            <dt>ファイル名</dt>
+            <dd>@mailFile.FileName</dd>
+
+            <dt>メール送信</dt>
+            <dd>
+                <span class="badge @(mail.Enabled ? "text-bg-success" : "text-bg-secondary")">
+                    @(mail.Enabled ? "有効" : "無効")
+                </span>
+            </dd>
+
+            <dt>SMTPホスト</dt>
+            <dd>@DisplayValue(mail.SmtpHost)</dd>
+
+            <dt>SMTPポート</dt>
+            <dd>@mail.SmtpPort</dd>
+
+            <dt>SSL/TLS</dt>
+            <dd>@(mail.EnableSsl ? "有効" : "無効")</dd>
+
+            <dt>送信元メールアドレス</dt>
+            <dd>@DisplayValue(mail.SenderAddress)</dd>
+
+            <dt>送信元名</dt>
+            <dd>@DisplayValue(mail.SenderName)</dd>
+
+            <dt>ユーザー名</dt>
+            <dd>@DisplayValue(mail.UserName)</dd>
+
+            <dt>パスワード</dt>
+            <dd>
+                <div class="settings-secret-row">
+                    <code class="settings-code">@DisplaySecretValue(mail.Password, showMailPassword)</code>
+                    @if (!string.IsNullOrWhiteSpace(mail.Password))
+                    {
+                        <button class="btn btn-sm btn-outline-secondary"
+                                type="button"
+                                aria-pressed="@showMailPassword"
+                                @onclick="ToggleMailPasswordVisibility">
+                            @(showMailPassword ? "非表示" : "表示")
+                        </button>
+                    }
+                </div>
+            </dd>
+
+            <dt>タイムアウト秒数</dt>
+            <dd>@mail.TimeoutSeconds</dd>
+        </dl>
+
+        <details class="settings-json">
+            <summary>元のJSONを表示</summary>
+            <pre class="parameter-json">@DisplayMailJson(mailFile)</pre>
+        </details>
+    </section>
+</div>
+
+<DeleteConfirmationModal IsOpen="@testMailModalOpen"
+                         Title="テストメール送信確認"
+                         Message="テストメールを送信しますか。"
+                         Detail="@TestMailConfirmationDetail"
+                         ConfirmButtonText="OK"
+                         ConfirmButtonCssClass="btn-primary"
+                         CancelButtonText="キャンセル"
+                         IsProcessing="@testMailProcessing"
+                         OnConfirm="ConfirmSendTestMailAsync"
+                         OnCancel="CancelSendTestMail" />
+
+@code {
+    private static readonly JsonSerializerOptions MaskedJsonOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        WriteIndented = true
+    };
+
+    private bool showConnectionString;
+    private bool showMailPassword;
+    private bool testMailModalOpen;
+    private bool testMailProcessing;
+    private string? testMailRecipient;
+    private string? testMailMessage;
+    private bool testMailIsError;
+
+    private string TestMailConfirmationDetail
+    {
+        get
+        {
+            var mail = ParameterFiles.ReadMailParameter();
+            return $"送信先: {DisplayValue(testMailRecipient)}{Environment.NewLine}" +
+                $"SMTPホスト: {DisplayValue(mail.SmtpHost)}{Environment.NewLine}" +
+                $"SMTPポート: {mail.SmtpPort}";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authenticationState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userId = UserManager.GetUserId(authenticationState.User);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return;
+        }
+
+        var user = await UserManager.FindByIdAsync(userId);
+        testMailRecipient = user?.Email ?? user?.UserName;
+    }
+
+    private static string DisplayValue(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+    private static string DisplaySecretValue(string? value, bool showValue) =>
+        string.IsNullOrWhiteSpace(value) ? "-" : showValue ? value : "********";
+
+    private void ToggleConnectionStringVisibility()
+    {
+        showConnectionString = !showConnectionString;
+    }
+
+    private void ToggleMailPasswordVisibility()
+    {
+        showMailPassword = !showMailPassword;
+    }
+
+    private bool CanSendTestMail(MailParameterFile mail) =>
+        mail.IsConfigured() && !string.IsNullOrWhiteSpace(testMailRecipient);
+
+    private string TestMailButtonTitle(MailParameterFile mail)
+    {
+        if (!mail.IsConfigured())
+        {
+            return "mail.json にメール送信に必要な設定がありません。";
+        }
+
+        if (string.IsNullOrWhiteSpace(testMailRecipient))
+        {
+            return "ログイン中ユーザーのメールアドレスを取得できません。";
+        }
+
+        return $"{testMailRecipient} にテストメールを送信します。";
+    }
+
+    private void RequestSendTestMail()
+    {
+        var mail = ParameterFiles.ReadMailParameter();
+        if (!CanSendTestMail(mail))
+        {
+            ShowTestMailMessage(TestMailButtonTitle(mail), true);
+            return;
+        }
+
+        testMailMessage = null;
+        testMailIsError = false;
+        testMailModalOpen = true;
+    }
+
+    private async Task ConfirmSendTestMailAsync()
+    {
+        if (string.IsNullOrWhiteSpace(testMailRecipient))
+        {
+            CancelSendTestMail();
+            ShowTestMailMessage("ログイン中ユーザーのメールアドレスを取得できません。", true);
+            return;
+        }
+
+        testMailProcessing = true;
+        try
+        {
+            var result = await EmailSender.SendTestEmailAsync(testMailRecipient);
+            ShowTestMailMessage(result.Message, !result.Succeeded);
+        }
+        finally
+        {
+            testMailProcessing = false;
+            testMailModalOpen = false;
+        }
+    }
+
+    private void CancelSendTestMail()
+    {
+        testMailModalOpen = false;
+    }
+
+    private void ShowTestMailMessage(string text, bool error = false)
+    {
+        testMailMessage = text;
+        testMailIsError = error;
+    }
+
+    private string DisplayRdsJson(ParameterFileSnapshot file) =>
+        showConnectionString ? file.Json : MaskJsonProperty(file.Json, "ConnectionString");
+
+    private string DisplayMailJson(ParameterFileSnapshot file) =>
+        showMailPassword ? file.Json : MaskJsonProperty(file.Json, "Password");
+
+    private static string MaskJsonProperty(string json, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return json;
+        }
+
+        try
+        {
+            var node = JsonNode.Parse(json);
+            if (node is JsonObject jsonObject &&
+                jsonObject[propertyName] is JsonValue jsonValue &&
+                !string.IsNullOrWhiteSpace(jsonValue.GetValue<string>()))
+            {
+                jsonObject[propertyName] = "********";
+            }
+
+            return node?.ToJsonString(MaskedJsonOptions) ?? json;
+        }
+        catch (JsonException)
+        {
+            // JSON が壊れている場合は、設定ファイルの内容をそのまま表示して原因確認を優先します。
+            return json;
+        }
+    }
+}

@@ -1,0 +1,234 @@
+@page "/admin/run-history"
+@attribute [Authorize(Roles = AppRoles.Administrator)]
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject ILogger<AdminRunHistory> Logger
+
+@* 管理者が古い実行履歴を条件指定で削除するための画面です。 *@
+<PageTitle>実行履歴管理</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>実行履歴管理</h1>
+        <p class="text-secondary mb-0">
+            実行履歴を作成日で抽出し、古い履歴を削除します。実行中・待機中の履歴は削除対象から除外します。
+        </p>
+    </div>
+    <button class="btn btn-outline-primary" type="button" @onclick="LoadSummaryAsync">再集計</button>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+}
+
+<section class="mb-4">
+    <h2 class="h4 mb-3 pb-2 border-bottom">削除条件</h2>
+    <div class="row g-3 align-items-end">
+        <div class="col-md-5">
+            <label class="form-label">削除範囲</label>
+            <select class="form-select" @bind="deleteRange">
+                <option value="@DeleteAllValue">全件</option>
+                @for (var month = 1; month <= 12; month++)
+                {
+                    <option value="@month">@month ヶ月以上前</option>
+                }
+            </select>
+            <div class="form-text">
+                判定には `FlowRuns.CreatedAt` を使用します。
+            </div>
+        </div>
+        <div class="col-md-4">
+            <button class="btn btn-outline-secondary" type="button" @onclick="LoadSummaryAsync">件数を確認</button>
+        </div>
+    </div>
+</section>
+
+<section class="mb-4">
+    <h2 class="h4 mb-3 pb-2 border-bottom">削除対象</h2>
+    <table class="table align-middle">
+        <tbody>
+            <tr>
+                <th style="width: 16rem;">条件</th>
+                <td>@ConditionText</td>
+            </tr>
+            <tr>
+                <th>削除対象の実行履歴</th>
+                <td>@targetFlowRunCount 件</td>
+            </tr>
+            <tr>
+                <th>削除対象のタスク実行履歴</th>
+                <td>@targetJobRunCount 件</td>
+            </tr>
+            <tr>
+                <th>対象内の最古作成日</th>
+                <td>@Format(oldestTargetCreatedAt)</td>
+            </tr>
+            <tr>
+                <th>対象内の最新作成日</th>
+                <td>@Format(newestTargetCreatedAt)</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <button class="btn btn-danger" type="button" @onclick="RequestDeleteHistoryAsync" disabled="@(targetFlowRunCount == 0)">
+        実行履歴を削除
+    </button>
+</section>
+
+<DeleteConfirmationModal IsOpen="@deleteHistoryModalOpen"
+                         Title="実行履歴削除確認"
+                         Message="実行履歴を削除しますか。"
+                         Detail="@DeleteHistoryDetail"
+                         IsProcessing="@deleteHistoryProcessing"
+                         OnConfirm="ConfirmDeleteHistoryAsync"
+                         OnCancel="CancelDeleteHistory" />
+
+@code {
+    private const int DeleteAllValue = 0;
+
+    private int deleteRange = 12;
+    private int targetFlowRunCount;
+    private int targetJobRunCount;
+    private DateTimeOffset? oldestTargetCreatedAt;
+    private DateTimeOffset? newestTargetCreatedAt;
+    private string? message;
+    private bool isError;
+    private bool deleteHistoryModalOpen;
+    private bool deleteHistoryProcessing;
+
+    private string ConditionText =>
+        deleteRange == DeleteAllValue
+            ? "全件。ただし、実行中・待機中の履歴は除外します。"
+            : $"{deleteRange} ヶ月以上前。作成日が {Format(CutoffDate)} より前の履歴を対象にします。";
+
+    private DateTimeOffset? CutoffDate =>
+        deleteRange == DeleteAllValue ? null : DateTimeOffset.UtcNow.AddMonths(-deleteRange);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadSummaryAsync();
+    }
+
+    private async Task LoadSummaryAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = BuildDeletionQuery(db);
+
+        targetFlowRunCount = await query.CountAsync();
+        targetJobRunCount = await db.JobRuns
+            .Where(jobRun => query.Select(run => run.Id).Contains(jobRun.FlowRunId))
+            .CountAsync();
+        oldestTargetCreatedAt = await query
+            .OrderBy(run => run.CreatedAt)
+            .Select(run => (DateTimeOffset?)run.CreatedAt)
+            .FirstOrDefaultAsync();
+        newestTargetCreatedAt = await query
+            .OrderByDescending(run => run.CreatedAt)
+            .Select(run => (DateTimeOffset?)run.CreatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    private string DeleteHistoryDetail =>
+        $"実行履歴 {targetFlowRunCount} 件、タスク実行履歴 {targetJobRunCount} 件を削除します。\n条件: {ConditionText}\nこの操作は元に戻せません。";
+
+    private async Task RequestDeleteHistoryAsync()
+    {
+        await LoadSummaryAsync();
+        if (targetFlowRunCount == 0)
+        {
+            Logger.LogInformation(
+                "実行履歴削除要求を中断しました。RetentionMonths={RetentionMonths}, Reason={Reason}",
+                deleteRange,
+                "削除対象なし");
+            ShowMessage("削除対象の実行履歴はありません。");
+            return;
+        }
+
+        Logger.LogWarning(
+            "実行履歴削除確認を表示します。RetentionMonths={RetentionMonths}, TargetFlowRunCount={TargetFlowRunCount}, TargetJobRunCount={TargetJobRunCount}",
+            deleteRange,
+            targetFlowRunCount,
+            targetJobRunCount);
+        deleteHistoryModalOpen = true;
+    }
+
+    private async Task ConfirmDeleteHistoryAsync()
+    {
+        deleteHistoryProcessing = true;
+        try
+        {
+            await DeleteHistoryAsync();
+        }
+        finally
+        {
+            deleteHistoryProcessing = false;
+            CancelDeleteHistory();
+        }
+    }
+
+    private void CancelDeleteHistory()
+    {
+        deleteHistoryModalOpen = false;
+    }
+
+    private async Task DeleteHistoryAsync()
+    {
+        await LoadSummaryAsync();
+        if (targetFlowRunCount == 0)
+        {
+            Logger.LogInformation(
+                "実行履歴削除を中断しました。RetentionMonths={RetentionMonths}, Reason={Reason}",
+                deleteRange,
+                "削除対象なし");
+            ShowMessage("削除対象の実行履歴はありません。");
+            return;
+        }
+
+        Logger.LogWarning(
+            "実行履歴削除を開始しました。RetentionMonths={RetentionMonths}, TargetFlowRunCount={TargetFlowRunCount}, TargetJobRunCount={TargetJobRunCount}",
+            deleteRange,
+            targetFlowRunCount,
+            targetJobRunCount);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+
+        var query = BuildDeletionQuery(db);
+        var deletedJobRuns = await db.JobRuns
+            .Where(jobRun => query.Select(run => run.Id).Contains(jobRun.FlowRunId))
+            .ExecuteDeleteAsync();
+        var deletedFlowRuns = await query.ExecuteDeleteAsync();
+
+        await transaction.CommitAsync();
+
+        Logger.LogWarning(
+            "実行履歴を削除しました。RetentionMonths={RetentionMonths}, DeletedFlowRuns={DeletedFlowRuns}, DeletedJobRuns={DeletedJobRuns}",
+            deleteRange,
+            deletedFlowRuns,
+            deletedJobRuns);
+        ShowMessage($"実行履歴 {deletedFlowRuns} 件、タスク実行履歴 {deletedJobRuns} 件を削除しました。");
+        await LoadSummaryAsync();
+    }
+
+    private IQueryable<FlowRun> BuildDeletionQuery(ApplicationDbContext db)
+    {
+        var query = db.FlowRuns
+            .Where(run => run.Status != ExecutionStatus.Queued && run.Status != ExecutionStatus.Running);
+
+        if (CutoffDate is DateTimeOffset cutoff)
+        {
+            query = query.Where(run => run.CreatedAt < cutoff);
+        }
+
+        return query;
+    }
+
+    private static string Format(DateTimeOffset? date) =>
+        date is null ? "-" : date.Value.ToLocalTime().ToString("yyyy/MM/dd HH:mm:ss");
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+}

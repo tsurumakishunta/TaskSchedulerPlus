@@ -1,0 +1,329 @@
+@page "/workflows/{WorkflowId:int}/tasks/create"
+@attribute [Authorize(Policy = AppPolicies.ManageWorkflows)]
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject NavigationManager Navigation
+@inject ILogger<WorkflowTaskCreate> Logger
+
+@* 選択したワークフローに対して、新しいタスクを専用画面で登録します。 *@
+<PageTitle>タスク追加</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>タスク追加</h1>
+        <p class="text-secondary mb-0">ワークフローに実行タスクを追加します。</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="@($"workflows/{WorkflowId}/tasks")">タスク一覧へ</a>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+}
+
+@if (workflow is null)
+{
+    <div class="alert alert-warning">対象のワークフローが見つかりません。</div>
+}
+else
+{
+    <div class="workflow-subnav mb-3">
+        <a href="@($"workflows/{WorkflowId}/tasks")">タスク登録</a>
+        <span>タスク追加</span>
+        <a href="@($"workflows/{WorkflowId}/schedule")">スケジュール設定</a>
+        <a href="runs">実行履歴</a>
+    </div>
+
+    <section class="mb-4">
+        <h2 class="h4 mb-3 pb-2 border-bottom">@workflow.Name</h2>
+        @if (!string.IsNullOrWhiteSpace(workflow.Description))
+        {
+            <p class="text-secondary">@workflow.Description</p>
+        }
+    </section>
+
+    <section>
+        <h2 class="h4 mb-3 pb-2 border-bottom">タスク情報</h2>
+        <EditForm Model="taskEditor" OnValidSubmit="SaveTaskAsync" FormName="taskCreateForm">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-danger" />
+
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">タスクID</label>
+                    <input class="form-control" value="保存時に自動採番されます" readonly disabled />
+                    <div class="form-text">タスクIDはUUIDとしてシステムが自動採番します。</div>
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label">タスク名</label>
+                    <InputText class="form-control" @bind-Value="taskEditor.Name" />
+                </div>
+
+                <div class="col-md-8">
+                    <label class="form-label">実行ファイル</label>
+                    <InputText class="form-control" @bind-Value="taskEditor.Command" placeholder="C:\Jobs\DailyTask.bat" />
+                    <div class="form-text">exe、bat、cmd のフルパス、または PATH から解決できるファイル名を指定してください。</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">正常戻り値</label>
+                    <InputNumber class="form-control" @bind-Value="taskEditor.SuccessExitCode" />
+                </div>
+
+                <div class="col-md-8">
+                    <label class="form-label">実行ファイルのパラメーター</label>
+                    <InputText class="form-control" @bind-Value="taskEditor.Arguments" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">タイムアウト（秒）</label>
+                    <InputNumber class="form-control" @bind-Value="taskEditor.TimeoutSeconds" />
+                </div>
+
+                <div class="col-md-8">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <label class="form-label mb-0">作業ディレクトリ</label>
+                        <button class="btn btn-link btn-sm p-0" type="button" @onclick="OpenWorkingDirectoryHelp">
+                            <span class="bi bi-question-circle me-1" aria-hidden="true"></span>説明
+                        </button>
+                    </div>
+                    <InputText class="form-control" @bind-Value="taskEditor.WorkingDirectory" />
+                    <div class="form-text">空欄の場合は実行ファイルのフォルダー、ファイル名だけの場合はアプリの実行フォルダーを使用します。</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">正常終了時の挙動</label>
+                    <InputSelect class="form-select" @bind-Value="taskEditor.RunNextOnSuccess">
+                        <option value="true">次のタスクを実行する</option>
+                        <option value="false">後続タスクを実行しない</option>
+                    </InputSelect>
+                </div>
+
+                <div class="col-md-8">
+                    <label class="form-check">
+                        <InputCheckbox class="form-check-input" @bind-Value="taskEditor.StopOnFailure" />
+                        <span class="form-check-label">エラー時は後続タスクを実行しない</span>
+                    </label>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-check">
+                        <InputCheckbox class="form-check-input" @bind-Value="taskEditor.IsEnabled" />
+                        <span class="form-check-label">このタスクを有効にする</span>
+                    </label>
+                </div>
+
+                <div class="col-12 d-flex justify-content-end gap-2">
+                    <a class="btn btn-outline-secondary" href="@($"workflows/{WorkflowId}/tasks")">キャンセル</a>
+                    <button class="btn btn-primary" type="submit">追加</button>
+                </div>
+            </div>
+        </EditForm>
+    </section>
+
+    <WorkingDirectoryHelpModal IsOpen="isWorkingDirectoryHelpOpen" OnClose="CloseWorkingDirectoryHelp" />
+}
+
+@code {
+    [Parameter] public int WorkflowId { get; set; }
+
+    private JobFlow? workflow;
+    private TaskCreateEditor taskEditor = NewTaskEditor();
+    private string? message;
+    private bool isError;
+    private bool isWorkingDirectoryHelpOpen;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        workflow = await db.JobFlows
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == WorkflowId);
+    }
+
+    private async Task SaveTaskAsync()
+    {
+        if (workflow is null)
+        {
+            Logger.LogWarning(
+                "タスク登録を中断しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                WorkflowId,
+                "ワークフローなし");
+            return;
+        }
+
+        var taskName = taskEditor.Name.Trim();
+        Logger.LogInformation(
+            "タスク登録を開始しました。WorkflowId={WorkflowId}, TaskName={TaskName}, CommandName={CommandName}, TimeoutSeconds={TimeoutSeconds}",
+            WorkflowId,
+            taskName,
+            SafeCommandName(taskEditor.Command),
+            taskEditor.TimeoutSeconds);
+
+        if (string.IsNullOrWhiteSpace(taskName))
+        {
+            Logger.LogWarning(
+                "タスク登録を中断しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                WorkflowId,
+                "タスク名未入力");
+            ShowMessage("タスク名を入力してください。", true);
+            return;
+        }
+
+        if (!HasExecutableExtension(taskEditor.Command))
+        {
+            Logger.LogWarning(
+                "タスク登録を中断しました。WorkflowId={WorkflowId}, TaskName={TaskName}, CommandName={CommandName}, Reason={Reason}",
+                WorkflowId,
+                taskName,
+                SafeCommandName(taskEditor.Command),
+                "実行ファイル拡張子不正");
+            ShowMessage("実行ファイルには .exe、.bat、.cmd のいずれかを指定してください。", true);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var normalizedTaskName = taskName.ToUpper();
+        var nameAlreadyExists = await db.JobNodes
+            .AnyAsync(item => item.JobFlowId == WorkflowId && item.Name.ToUpper() == normalizedTaskName);
+        if (nameAlreadyExists)
+        {
+            Logger.LogWarning(
+                "タスク登録を中断しました。WorkflowId={WorkflowId}, TaskName={TaskName}, Reason={Reason}",
+                WorkflowId,
+                taskName,
+                "タスク名重複");
+            ShowMessage("同じタスク名は登録できません。別のタスク名を入力してください。", true);
+            return;
+        }
+
+        var task = new JobNode
+        {
+            JobFlowId = WorkflowId,
+            JobDefinition = CreateTaskDefinition(taskEditor),
+            Name = taskName,
+            DisplayOrder = await db.JobNodes.CountAsync(item => item.JobFlowId == WorkflowId),
+            RunNextOnSuccess = taskEditor.RunNextOnSuccess,
+            StopOnFailure = taskEditor.StopOnFailure
+        };
+
+        try
+        {
+            db.JobNodes.Add(task);
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            Logger.LogWarning(
+                ex,
+                "タスク登録を中断しました。WorkflowId={WorkflowId}, TaskName={TaskName}, Reason={Reason}",
+                WorkflowId,
+                taskName,
+                "タスク名重複");
+            ShowMessage("同じタスク名は登録できません。別のタスク名を入力してください。", true);
+            return;
+        }
+
+        Logger.LogInformation(
+            "タスクを登録しました。WorkflowId={WorkflowId}, TaskId={TaskId}, TaskName={TaskName}, JobDefinitionId={JobDefinitionId}",
+            WorkflowId,
+            task.Id,
+            task.Name,
+            task.JobDefinitionId);
+
+        Navigation.NavigateTo($"workflows/{WorkflowId}/tasks?created=true");
+    }
+
+    private static JobDefinition CreateTaskDefinition(TaskCreateEditor editor)
+    {
+        var definition = new JobDefinition();
+        CopyToDefinition(editor, definition);
+        return definition;
+    }
+
+    private static void CopyToDefinition(TaskCreateEditor editor, JobDefinition definition)
+    {
+        definition.Name = editor.Name.Trim();
+        definition.Description = editor.Description;
+        definition.Command = editor.Command.Trim();
+        definition.Arguments = editor.Arguments;
+        definition.WorkingDirectory = editor.WorkingDirectory;
+        definition.SuccessExitCode = editor.SuccessExitCode;
+        definition.TimeoutSeconds = editor.TimeoutSeconds;
+        definition.IsEnabled = editor.IsEnabled;
+    }
+
+    private static TaskCreateEditor NewTaskEditor() => new()
+    {
+        SuccessExitCode = 0,
+        TimeoutSeconds = 300,
+        RunNextOnSuccess = true,
+        StopOnFailure = true,
+        IsEnabled = true
+    };
+
+    private static bool HasExecutableExtension(string path)
+    {
+        var extension = Path.GetExtension(path.Trim().Trim('"'));
+        return extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception) =>
+        exception.InnerException is Microsoft.Data.SqlClient.SqlException sqlException &&
+        sqlException.Number is 2601 or 2627;
+
+    private static string SafeCommandName(string command)
+    {
+        var text = command.Trim().Trim('"');
+        return string.IsNullOrWhiteSpace(text) ? "-" : Path.GetFileName(text);
+    }
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+
+    private sealed class TaskCreateEditor
+    {
+        [Required(ErrorMessage = "タスク名を入力してください。")]
+        [StringLength(100, ErrorMessage = "タスク名は {1} 文字以内で入力してください。")]
+        public string Name { get; set; } = string.Empty;
+
+        [StringLength(500, ErrorMessage = "説明は {1} 文字以内で入力してください。")]
+        public string? Description { get; set; }
+
+        [Required(ErrorMessage = "実行ファイルを入力してください。")]
+        [StringLength(500, ErrorMessage = "実行ファイルは {1} 文字以内で入力してください。")]
+        public string Command { get; set; } = string.Empty;
+
+        [StringLength(1000, ErrorMessage = "パラメーターは {1} 文字以内で入力してください。")]
+        public string? Arguments { get; set; }
+
+        [StringLength(500, ErrorMessage = "作業ディレクトリは {1} 文字以内で入力してください。")]
+        public string? WorkingDirectory { get; set; }
+
+        public int SuccessExitCode { get; set; }
+
+        [Range(1, 86400, ErrorMessage = "タイムアウトは 1 秒から 86400 秒の範囲で入力してください。")]
+        public int TimeoutSeconds { get; set; } = 300;
+
+        public bool RunNextOnSuccess { get; set; } = true;
+
+        public bool StopOnFailure { get; set; } = true;
+
+        public bool IsEnabled { get; set; } = true;
+    }
+
+    private void OpenWorkingDirectoryHelp()
+    {
+        isWorkingDirectoryHelpOpen = true;
+    }
+
+    private void CloseWorkingDirectoryHelp()
+    {
+        isWorkingDirectoryHelpOpen = false;
+    }
+}

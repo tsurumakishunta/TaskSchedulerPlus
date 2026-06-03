@@ -1,0 +1,22 @@
+﻿@using TaskSchedulerPlus.Web.Components.Account.Shared
+@* ルーティングと認可時の表示をまとめるコンポーネントです。 *@
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+            <NotAuthorized>
+                <AuthorizeView>
+                    <Authorized Context="authenticatedUser">
+                        <LayoutView Layout="typeof(Layout.MainLayout)">
+                            <h1>アクセス権がありません</h1>
+                            <p>この画面を表示する権限がありません。</p>
+                        </LayoutView>
+                    </Authorized>
+                    <NotAuthorized Context="anonymousUser">
+                        <RedirectToLogin />
+                    </NotAuthorized>
+                </AuthorizeView>
+            </NotAuthorized>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+</Router>

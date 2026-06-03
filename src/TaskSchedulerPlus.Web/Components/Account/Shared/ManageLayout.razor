@@ -1,0 +1,18 @@
+@inherits LayoutComponentBase
+@layout TaskSchedulerPlus.Web.Components.Layout.MainLayout
+
+@* アカウント管理系ページで共通利用するレイアウトです。 *@
+<h1>アカウント管理</h1>
+
+<div>
+    <h2>アカウント設定</h2>
+    <hr />
+    <div class="row">
+        <div class="col-lg-3">
+            <ManageNavMenu />
+        </div>
+        <div class="col-lg-9">
+            @Body
+        </div>
+    </div>
+</div>

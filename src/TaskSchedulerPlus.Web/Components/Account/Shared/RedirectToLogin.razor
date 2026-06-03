@@ -1,0 +1,9 @@
+﻿@inject NavigationManager NavigationManager
+
+@code {
+    protected override void OnInitialized()
+    {
+        // 未ログインで保護画面に入った場合、現在URLを returnUrl としてログイン画面へ送ります。
+        NavigationManager.NavigateTo($"Account/Login?returnUrl={Uri.EscapeDataString(NavigationManager.Uri)}", forceLoad: true);
+    }
+}

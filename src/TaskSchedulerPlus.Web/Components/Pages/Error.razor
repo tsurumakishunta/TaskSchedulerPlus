@@ -1,0 +1,36 @@
+﻿@page "/Error"
+@using System.Diagnostics
+
+@* 予期しない例外が発生した場合に表示する共通エラー画面です。 *@
+<PageTitle>エラー</PageTitle>
+
+<h1 class="text-danger">エラーが発生しました。</h1>
+<h2 class="text-danger">リクエストの処理中に問題が発生しました。</h2>
+
+@if (ShowRequestId)
+{
+    <p>
+        <strong>リクエストID:</strong> <code>@RequestId</code>
+    </p>
+}
+
+<h3>開発環境での確認</h3>
+<p>
+    詳細なエラー情報を確認するには、開発環境でアプリケーションを実行してください。
+</p>
+<p>
+    <strong>本番環境では開発環境の詳細表示を有効にしないでください。</strong>
+    例外の詳細に機密情報が含まれる場合があります。
+    ローカルで調査する場合は、環境変数 <strong>ASPNETCORE_ENVIRONMENT</strong> を <strong>Development</strong> に設定してアプリを再起動してください。
+</p>
+
+@code{
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

@@ -1,0 +1,32 @@
+@startuml
+title 初期設定フロー
+
+start
+:Webアプリ起動;
+if (setup.json が存在し\n復号できる?) then (はい)
+  :DBマイグレーション実行;
+  :必須ロール作成;
+  :通常画面へ遷移;
+else (いいえ)
+  :/setup へリダイレクト;
+  :DB接続情報・初期管理者を入力;
+  :接続文字列を生成;
+  if (DB接続とMigrationに成功?) then (はい)
+    if (既存ユーザーが存在する?) then (はい)
+      :エラー表示;
+      stop
+    else (いいえ)
+      :setup.json に保護済み接続文字列を保存;
+      :src/Parameter/rds.json を保存;
+      :初期管理者を作成;
+      :Administrator ロール付与;
+      :ログイン画面へ遷移;
+      stop
+    endif
+  else (いいえ)
+    :接続エラーを表示;
+    stop
+  endif
+endif
+
+@enduml

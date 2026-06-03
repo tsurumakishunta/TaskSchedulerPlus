@@ -1,0 +1,24 @@
+@startuml
+title スケジュール実行フロー
+
+start
+:Worker 起動;
+repeat
+  :FlowScheduleDispatcher が30秒待機;
+  if (初期設定済み?) then (はい)
+    :現在時刻 <= NextRunAt の\n有効ワークフローを取得;
+    while (対象ワークフローあり?)
+      :次回実行時刻を再計算;
+      if (次回実行なし?) then (はい)
+        :ScheduleEnabled = false;
+      endif
+      :FlowExecutionQueue.EnqueueAsync;
+      :FlowRun / JobRun を Queued で作成;
+    endwhile
+  else (いいえ)
+    :何もせず待機;
+  endif
+repeat while (停止要求なし?)
+stop
+
+@enduml

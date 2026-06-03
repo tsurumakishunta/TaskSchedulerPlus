@@ -1,0 +1,280 @@
+@page "/admin/workflow-json/export"
+@attribute [Authorize(Roles = AppRoles.Administrator)]
+@inject WorkflowJsonTransferService WorkflowJsonTransfer
+@inject IJSRuntime JS
+@inject ILogger<AdminWorkflowJsonExport> Logger
+@using System.IO
+
+@* ワークフローとタスク定義をJSON ZIPとして出力する画面です。 *@
+<PageTitle>ワークフローJSONエクスポート</PageTitle>
+
+<div class="settings-page">
+    <div class="settings-title">
+        <div>
+            <h1>ワークフローJSONエクスポート</h1>
+            <p class="text-secondary mb-0">
+                検索結果から選択したワークフロー、または全件をZIPファイルとして出力します。
+            </p>
+        </div>
+        <a class="btn btn-outline-secondary" href="admin/workflow-json">入出力メニューへ戻る</a>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+    }
+
+    <section class="settings-section">
+        <div class="settings-section-heading">
+            <div>
+                <div class="settings-eyebrow">EXPORT</div>
+                <h2>エクスポート対象</h2>
+                <p>
+                    ワークフロー名または説明で検索し、チェックしたワークフローをZIP出力できます。
+                    全件出力を選ぶと検索条件に関係なく全ワークフローを出力します。
+                </p>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-end mb-3">
+            <div class="col-md-6">
+                <label class="form-label" for="workflowExportKeyword">検索キーワード</label>
+                <input id="workflowExportKeyword"
+                       class="form-control"
+                       placeholder="ワークフロー名または説明で検索"
+                       @bind="searchKeyword"
+                       @bind:event="oninput" />
+            </div>
+            <div class="col-md-6 d-flex flex-wrap gap-2">
+                <button class="btn btn-outline-secondary" type="button" @onclick="() => SearchWorkflowsAsync()" disabled="@(isSearching || isProcessing)">
+                    検索
+                </button>
+                <button class="btn btn-primary" type="button" @onclick="ExportSelectedAsync" disabled="@(selectedWorkflowIds.Count == 0 || isProcessing)">
+                    選択したワークフローをZIP出力
+                </button>
+                <button class="btn btn-outline-primary" type="button" @onclick="ExportAllAsync" disabled="@isProcessing">
+                    全件出力
+                </button>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="text-secondary small">
+                検索結果 @exportWorkflows.Count 件 / 選択中 @selectedWorkflowIds.Count 件
+            </div>
+            @if (isSearching)
+            {
+                <div class="text-secondary small">検索中です。</div>
+            }
+        </div>
+
+        @if (exportWorkflows.Count == 0)
+        {
+            <div class="alert alert-light border mb-0">
+                エクスポート対象のワークフローがありません。検索条件を変更して再検索してください。
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width: 48px;">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       aria-label="検索結果をすべて選択"
+                                       checked="@AllVisibleSelected"
+                                       @onchange="ToggleVisibleSelection" />
+                            </th>
+                            <th>ワークフロー名</th>
+                            <th>タスク数</th>
+                            <th>スケジュール</th>
+                            <th>次回実行</th>
+                            <th>状態</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var workflow in exportWorkflows)
+                        {
+                            <tr>
+                                <td>
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           aria-label="@($"{workflow.Name}を選択")"
+                                           checked="@selectedWorkflowIds.Contains(workflow.Id)"
+                                           @onchange="args => ToggleWorkflowSelection(workflow.Id, args)" />
+                                </td>
+                                <td>
+                                    <strong>@workflow.Name</strong>
+                                    @if (!string.IsNullOrWhiteSpace(workflow.Description))
+                                    {
+                                        <div class="text-secondary small">@workflow.Description</div>
+                                    }
+                                </td>
+                                <td>@workflow.TaskCount</td>
+                                <td>@(workflow.ScheduleEnabled ? "有効" : "無効")</td>
+                                <td>@FormatDateTime(workflow.NextRunAt)</td>
+                                <td>@(workflow.IsEnabled ? "有効" : "無効")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private List<WorkflowExportListItem> exportWorkflows = [];
+    private HashSet<int> selectedWorkflowIds = [];
+    private string? searchKeyword;
+    private string? message;
+    private bool isError;
+    private bool isProcessing;
+    private bool isSearching;
+
+    private bool AllVisibleSelected =>
+        exportWorkflows.Count > 0 &&
+        exportWorkflows.All(workflow => selectedWorkflowIds.Contains(workflow.Id));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SearchWorkflowsAsync();
+    }
+
+    private async Task SearchWorkflowsAsync(bool clearMessage = true)
+    {
+        try
+        {
+            isSearching = true;
+            exportWorkflows = (await WorkflowJsonTransfer.SearchWorkflowsAsync(searchKeyword)).ToList();
+            selectedWorkflowIds.IntersectWith(exportWorkflows.Select(workflow => workflow.Id));
+            Logger.LogInformation(
+                "ワークフローJSON出力対象を検索しました。KeywordSpecified={KeywordSpecified}, ResultCount={ResultCount}, SelectedCount={SelectedCount}",
+                !string.IsNullOrWhiteSpace(searchKeyword),
+                exportWorkflows.Count,
+                selectedWorkflowIds.Count);
+            if (clearMessage)
+            {
+                message = null;
+                isError = false;
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(
+                exception,
+                "ワークフローJSON出力対象の検索に失敗しました。KeywordSpecified={KeywordSpecified}",
+                !string.IsNullOrWhiteSpace(searchKeyword));
+            ShowMessage($"ワークフローの検索に失敗しました。{exception.Message}", true);
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    private void ToggleVisibleSelection(ChangeEventArgs args)
+    {
+        if (IsChecked(args))
+        {
+            foreach (var workflow in exportWorkflows)
+            {
+                selectedWorkflowIds.Add(workflow.Id);
+            }
+        }
+        else
+        {
+            foreach (var workflow in exportWorkflows)
+            {
+                selectedWorkflowIds.Remove(workflow.Id);
+            }
+        }
+    }
+
+    private void ToggleWorkflowSelection(int workflowId, ChangeEventArgs args)
+    {
+        if (IsChecked(args))
+        {
+            selectedWorkflowIds.Add(workflowId);
+            return;
+        }
+
+        selectedWorkflowIds.Remove(workflowId);
+    }
+
+    private async Task ExportSelectedAsync()
+    {
+        if (selectedWorkflowIds.Count == 0)
+        {
+            Logger.LogWarning("ワークフローJSON選択出力を中断しました。Reason={Reason}", "選択なし");
+            ShowMessage("エクスポートするワークフローを選択してください。", true);
+            return;
+        }
+
+        Logger.LogInformation(
+            "ワークフローJSON選択出力を開始しました。SelectedCount={SelectedCount}",
+            selectedWorkflowIds.Count);
+        await ExportZipAsync(() => WorkflowJsonTransfer.ExportSelectedZipAsync(selectedWorkflowIds.ToList()));
+    }
+
+    private async Task ExportAllAsync()
+    {
+        Logger.LogInformation("ワークフローJSON全件出力を開始しました。");
+        await ExportZipAsync(() => WorkflowJsonTransfer.ExportAllZipAsync());
+    }
+
+    private async Task ExportZipAsync(Func<Task<WorkflowZipExportResult>> exportAction)
+    {
+        try
+        {
+            isProcessing = true;
+            var result = await exportAction();
+            await DownloadZipAsync(result);
+            Logger.LogInformation(
+                "ワークフローJSONをZIP出力しました。WorkflowCount={WorkflowCount}, TaskCount={TaskCount}, FileName={FileName}",
+                result.WorkflowCount,
+                result.TaskCount,
+                result.FileName);
+            ShowMessage($"ワークフロー {result.WorkflowCount} 件、タスク {result.TaskCount} 件をZIP出力しました。");
+        }
+        catch (WorkflowJsonTransferException exception)
+        {
+            Logger.LogWarning(exception, "ワークフローJSON出力を中断しました。");
+            ShowMessage(exception.Message, true);
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "ワークフローJSON出力に失敗しました。");
+            ShowMessage($"エクスポートに失敗しました。{exception.Message}", true);
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task DownloadZipAsync(WorkflowZipExportResult result)
+    {
+        using var stream = new MemoryStream(result.ZipBytes);
+        using var streamReference = new DotNetStreamReference(stream);
+        await JS.InvokeVoidAsync(
+            "jobScheduler.downloadFileFromStream",
+            result.FileName,
+            streamReference,
+            "application/zip");
+    }
+
+    private static bool IsChecked(ChangeEventArgs args) =>
+        args.Value is bool checkedValue && checkedValue;
+
+    private static string FormatDateTime(DateTimeOffset? value) =>
+        value?.ToLocalTime().ToString("yyyy/MM/dd HH:mm") ?? "-";
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+}

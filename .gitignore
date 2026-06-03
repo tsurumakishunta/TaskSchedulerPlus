@@ -1,0 +1,21 @@
+.dotnet/
+.nuget/
+.tools/
+bin/
+obj/
+artifacts/
+tmp/
+*.user
+*.suo
+.vs/
+app-start.*
+docs-private/
+
+# Runtime settings and generated state
+/Parameter/
+src/Parameter/*.json
+!src/Parameter/*.example.json
+src/**/App_Data/
+logs/
+src/**/logs/
+*.log

@@ -1,0 +1,39 @@
+@startuml
+title システム全体構成
+
+actor "利用者" as User
+actor "管理者" as Admin
+
+node "Web サーバー" {
+  component "TaskSchedulerPlus.Web\nBlazor Server" as Web
+}
+
+node "Worker 実行環境" {
+  component "TaskSchedulerPlus.Worker\nHosted Service" as Worker
+}
+
+database "SQL Server\nTaskSchedulerPlus DB" as DB
+folder "src/Parameter" as Parameter {
+  file "rds.json" as Rds
+  file "mail.json" as Mail
+}
+folder "App_Data" as AppData {
+  file "setup.json" as Setup
+  folder "keys" as Keys
+}
+folder "各プログラム実行直下\nlogs" as Logs
+component "外部プロセス\nexe / bat / cmd" as Process
+
+User --> Web : 画面操作
+Admin --> Web : 管理操作
+Web --> DB : 登録・参照・更新
+Worker --> DB : 監視・実行状態更新
+Web --> Parameter : 設定参照
+Worker --> Parameter : 設定参照
+Web --> AppData : 初期設定・DataProtection
+Worker --> AppData : DataProtection
+Web --> Logs : Webログ出力
+Worker --> Logs : Workerログ出力
+Worker --> Process : Process.Start
+
+@enduml

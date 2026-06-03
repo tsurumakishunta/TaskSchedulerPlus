@@ -1,0 +1,55 @@
+@startuml
+title タスク実行フロー
+
+start
+:QueuedFlowRunDispatcher が5秒ごとに確認;
+if (Queued の FlowRun あり?) then (はい)
+  :FlowRun を Running に更新;
+  :JobNode を DisplayOrder 順に取得;
+  while (未処理タスクあり?)
+    if (タスク定義が有効?) then (はい)
+      :JobRun を Running に更新;
+      :ProcessStartInfo を作成;
+      if (.bat / .cmd ?) then (はい)
+        :cmd.exe /d /c 経由で起動;
+      else (いいえ)
+        :実行ファイルを直接起動;
+      endif
+      :標準出力・標準エラーを取得;
+      if (タイムアウト?) then (はい)
+        :プロセスツリーを Kill;
+        :JobRun = TimedOut;
+        :FlowRun = Failed;
+        stop
+      else (いいえ)
+        if (ExitCode == SuccessExitCode?) then (はい)
+          :JobRun = Succeeded;
+          if (RunNextOnSuccess?) then (はい)
+            :次のタスクへ;
+          else (いいえ)
+            :残りを Skipped;
+            :FlowRun = Succeeded;
+            stop
+          endif
+        else (いいえ)
+          :JobRun = Failed;
+          if (StopOnFailure?) then (はい)
+            :残りを Skipped;
+            :FlowRun = Failed;
+            stop
+          else (いいえ)
+            :次のタスクへ;
+          endif
+        endif
+      endif
+    else (いいえ)
+      :JobRun = Skipped;
+    endif
+  endwhile
+  :FlowRun = Succeeded または Failed;
+else (いいえ)
+  :待機;
+endif
+stop
+
+@enduml

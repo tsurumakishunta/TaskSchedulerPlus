@@ -1,0 +1,31 @@
+@startuml
+title 認証・認可フロー
+
+start
+:利用者が画面へアクセス;
+if (初期設定済み?) then (はい)
+  if (認証が必要な画面?) then (はい)
+    if (ログイン済み?) then (はい)
+      :Identity Cookie を検証;
+      :ロールを取得;
+      if (必要権限あり?) then (はい)
+        :画面表示;
+      else (いいえ)
+        :アクセス拒否画面;
+      endif
+    else (いいえ)
+      :ログイン画面へリダイレクト;
+    endif
+  else (いいえ)
+    :画面表示;
+  endif
+else (いいえ)
+  if (/setup または静的リソース?) then (はい)
+    :アクセス許可;
+  else (いいえ)
+    :/setup へリダイレクト;
+  endif
+endif
+stop
+
+@enduml

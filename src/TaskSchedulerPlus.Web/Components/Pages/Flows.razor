@@ -1,0 +1,524 @@
+@page "/workflows"
+@page "/flows"
+@attribute [Authorize(Policy = AppPolicies.ManageWorkflows)]
+@inject IDbContextFactory<ApplicationDbContext> DbFactory
+@inject IFlowExecutionQueue ExecutionQueue
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@inject ISetupConfigurationStore SetupConfiguration
+@inject ILogger<Flows> Logger
+
+@* ワークフロー一覧、新規作成、削除、即時実行への導線を提供する画面です。 *@
+<PageTitle>ワークフロー</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1>ワークフロー</h1>
+        <p class="text-secondary mb-0">
+            複数のタスクをまとめて実行する単位です。ここではワークフロー名と説明を登録します。
+        </p>
+    </div>
+    <button class="btn btn-primary" type="button" @onclick="OpenCreateForm" disabled="@showCreateForm">
+        新規ワークフロー作成
+    </button>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <div class="alert @(isError ? "alert-danger" : "alert-success")">@message</div>
+}
+
+@if (showSchedulePrompt && createdWorkflowId is int workflowId)
+{
+    <div class="alert alert-info d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+        <div>
+            ワークフローを登録しました。スケジュール設定を行いますか？
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-primary btn-sm" type="button" @onclick="() => OpenScheduleSettings(workflowId)">はい</button>
+            <button class="btn btn-outline-secondary btn-sm" type="button" @onclick="DismissSchedulePrompt">いいえ</button>
+        </div>
+    </div>
+}
+
+@if (showCreateForm)
+{
+    <section class="mb-5">
+        <h2 class="h4 mb-3 pb-2 border-bottom">新規ワークフロー作成</h2>
+        <EditForm Model="newWorkflow" OnValidSubmit="CreateWorkflowAsync" FormName="createWorkflowForm">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-danger" />
+            <div class="row g-3">
+                <div class="col-md-5">
+                    <label class="form-label">ワークフロー名</label>
+                    <InputText class="form-control" @bind-Value="newWorkflow.Name" placeholder="例：日次売上集計" />
+                </div>
+                <div class="col-md-7">
+                    <label class="form-label">説明</label>
+                    <InputText class="form-control" @bind-Value="newWorkflow.Description" />
+                </div>
+                <div class="col-12">
+                    <div class="form-text">
+                        実行時間や繰り返し条件は、登録後の「スケジュール設定」で指定します。
+                    </div>
+                </div>
+                <div class="col-12 d-flex justify-content-end gap-2">
+                    <button class="btn btn-outline-secondary" type="button" @onclick="CancelCreateWorkflow">キャンセル</button>
+                    <button class="btn btn-primary" type="submit">登録</button>
+                </div>
+            </div>
+        </EditForm>
+    </section>
+}
+
+@if (!showCreateForm)
+{
+    <section>
+        <h2 class="h4 mb-3 pb-2 border-bottom">ワークフロー一覧</h2>
+        @if (workflows.Count == 0)
+        {
+            <p class="text-secondary mb-0">ワークフローはまだありません。</p>
+        }
+        else
+        {
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>ワークフロー名</th>
+                        <th>スケジュール</th>
+                        <th>次回実行</th>
+                        <th>タスク数</th>
+                        <th>状態</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var workflow in workflows)
+                    {
+                        <tr>
+                            <td>
+                                <strong>@workflow.Name</strong>
+                                @if (!string.IsNullOrWhiteSpace(workflow.Description))
+                                {
+                                    <div class="text-secondary small">@workflow.Description</div>
+                                }
+                            </td>
+                            <td>@ScheduleText(workflow)</td>
+                            <td>@Format(workflow.NextRunAt)</td>
+                            <td>@workflow.Nodes.Count</td>
+                            <td>@(workflow.IsEnabled ? "有効" : "無効")</td>
+                            <td class="text-end workflow-actions">
+                                <a class="btn btn-sm btn-outline-primary" href="@($"workflows/{workflow.Id}/tasks")">タスク登録</a>
+                                <a class="btn btn-sm btn-outline-secondary" href="@($"workflows/{workflow.Id}/schedule")">スケジュール設定</a>
+                                <button class="btn btn-sm btn-success" type="button" @onclick="() => ExecuteAsync(workflow.Id)" disabled="@(workflow.Nodes.Count == 0)">今すぐ実行</button>
+                                <AuthorizeView Roles="@AppRoles.Administrator">
+                                    <Authorized>
+                                        <button class="btn btn-sm btn-outline-danger" type="button" @onclick="() => RequestDeleteWorkflowAsync(workflow.Id)">削除</button>
+                                    </Authorized>
+                                </AuthorizeView>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </section>
+}
+
+<DeleteConfirmationModal IsOpen="@deleteWorkflowModalOpen"
+                         Title="ワークフロー削除確認"
+                         Message="@deleteWorkflowMessage"
+                         Detail="@deleteWorkflowDetail"
+                         IsProcessing="@deleteWorkflowProcessing"
+                         OnConfirm="ConfirmDeleteWorkflowAsync"
+                         OnCancel="CancelDeleteWorkflow" />
+
+@code {
+    private List<JobFlow> workflows = [];
+    private WorkflowDraft newWorkflow = new();
+    private bool showCreateForm;
+    private bool showSchedulePrompt;
+    private int? createdWorkflowId;
+    private string? message;
+    private bool isError;
+    private bool deleteWorkflowModalOpen;
+    private bool deleteWorkflowProcessing;
+    private int? pendingDeleteWorkflowId;
+    private string deleteWorkflowMessage = "ワークフローを削除しますか。";
+    private string? deleteWorkflowDetail;
+
+    private TimeZoneInfo AppTimeZone => ResolveAppTimeZone();
+    protected override async Task OnInitializedAsync()
+    {
+        newWorkflow = CreateWorkflowDraft();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        workflows = await db.JobFlows
+            .Include(workflow => workflow.Nodes)
+            .OrderBy(workflow => workflow.Name)
+            .AsNoTracking()
+            .ToListAsync();
+    }
+
+    private async Task CreateWorkflowAsync()
+    {
+        var workflowName = newWorkflow.Name.Trim();
+        Logger.LogInformation(
+            "ワークフロー登録を開始しました。WorkflowName={WorkflowName}",
+            workflowName);
+        if (string.IsNullOrWhiteSpace(workflowName))
+        {
+            Logger.LogWarning("ワークフロー登録を中断しました。Reason={Reason}", "ワークフロー名未入力");
+            ShowMessage("ワークフロー名を入力してください。", true);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var normalizedWorkflowName = workflowName.ToUpper();
+        var nameAlreadyExists = await db.JobFlows
+            .AnyAsync(workflow => workflow.Name.ToUpper() == normalizedWorkflowName);
+        if (nameAlreadyExists)
+        {
+            Logger.LogWarning(
+                "ワークフロー登録を中断しました。Reason={Reason}, WorkflowName={WorkflowName}",
+                "ワークフロー名重複",
+                workflowName);
+            ShowMessage("同じワークフロー名は登録できません。別のワークフロー名を入力してください。", true);
+            return;
+        }
+
+        var workflow = new JobFlow
+        {
+            Name = workflowName,
+            Description = newWorkflow.Description,
+            IsEnabled = true,
+            ScheduleEnabled = false,
+            ScheduleType = ScheduleType.Once,
+            ScheduleEveryDays = 1,
+            ScheduleEveryWeeks = 1,
+            ScheduleEveryMonths = 1
+        };
+
+        try
+        {
+            db.JobFlows.Add(workflow);
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            Logger.LogWarning(
+                ex,
+                "ワークフロー登録を中断しました。Reason={Reason}, WorkflowName={WorkflowName}",
+                "ワークフロー名重複",
+                workflowName);
+            ShowMessage("同じワークフロー名は登録できません。別のワークフロー名を入力してください。", true);
+            return;
+        }
+
+        Logger.LogInformation(
+            "ワークフローを登録しました。WorkflowId={WorkflowId}, WorkflowName={WorkflowName}",
+            workflow.Id,
+            workflow.Name);
+
+        newWorkflow = CreateWorkflowDraft();
+        showCreateForm = false;
+        showSchedulePrompt = true;
+        createdWorkflowId = workflow.Id;
+        message = null;
+        isError = false;
+        await LoadAsync();
+    }
+
+    private void OpenCreateForm()
+    {
+        message = null;
+        isError = false;
+        showSchedulePrompt = false;
+        createdWorkflowId = null;
+        newWorkflow = CreateWorkflowDraft();
+        showCreateForm = true;
+    }
+
+    private void CancelCreateWorkflow()
+    {
+        message = null;
+        isError = false;
+        showSchedulePrompt = false;
+        createdWorkflowId = null;
+        newWorkflow = CreateWorkflowDraft();
+        showCreateForm = false;
+    }
+
+    private void OpenScheduleSettings(int workflowId)
+    {
+        showSchedulePrompt = false;
+        createdWorkflowId = null;
+        Navigation.NavigateTo($"workflows/{workflowId}/schedule");
+    }
+
+    private void DismissSchedulePrompt()
+    {
+        showSchedulePrompt = false;
+        createdWorkflowId = null;
+        ShowMessage("ワークフローを登録しました。");
+    }
+
+    private async Task ExecuteAsync(int workflowId)
+    {
+        var authenticationState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userId = authenticationState.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        Logger.LogInformation(
+            "ワークフロー手動実行を開始しました。WorkflowId={WorkflowId}, RequestedByUserId={RequestedByUserId}",
+            workflowId,
+            userId ?? "unknown");
+        var runId = await ExecutionQueue.EnqueueAsync(workflowId, userId);
+        Logger.LogInformation(
+            "ワークフロー手動実行をキューへ登録しました。WorkflowId={WorkflowId}, RunId={RunId}, RequestedByUserId={RequestedByUserId}",
+            workflowId,
+            runId,
+            userId ?? "unknown");
+        Navigation.NavigateTo($"runs/{runId}");
+    }
+
+    private async Task RequestDeleteWorkflowAsync(int workflowId)
+    {
+        if (!await CurrentUserIsAdministratorAsync())
+        {
+            Logger.LogWarning(
+                "ワークフロー削除要求を拒否しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                workflowId,
+                "管理者権限なし");
+            ShowMessage("ワークフローの削除は管理者のみ実行できます。", true);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var workflow = await db.JobFlows
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == workflowId);
+        if (workflow is null)
+        {
+            Logger.LogWarning(
+                "ワークフロー削除要求を中断しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                workflowId,
+                "対象なし");
+            ShowMessage("ワークフローが見つかりません。", true);
+            await LoadAsync();
+            return;
+        }
+
+        var activeRunCount = await db.FlowRuns.CountAsync(item =>
+            item.JobFlowId == workflowId &&
+            (item.Status == ExecutionStatus.Queued || item.Status == ExecutionStatus.Running));
+        if (activeRunCount > 0)
+        {
+            Logger.LogWarning(
+                "ワークフロー削除要求を中断しました。WorkflowId={WorkflowId}, ActiveRunCount={ActiveRunCount}",
+                workflowId,
+                activeRunCount);
+            ShowMessage("実行中または待機中のワークフローは削除できません。完了後に削除してください。", true);
+            return;
+        }
+
+        var historyCount = await db.FlowRuns.CountAsync(item => item.JobFlowId == workflowId);
+        Logger.LogInformation(
+            "ワークフロー削除確認を表示します。WorkflowId={WorkflowId}, WorkflowName={WorkflowName}, HistoryCount={HistoryCount}",
+            workflowId,
+            workflow.Name,
+            historyCount);
+        pendingDeleteWorkflowId = workflowId;
+        deleteWorkflowMessage = $"ワークフロー「{workflow.Name}」を削除しますか。";
+        deleteWorkflowDetail = historyCount > 0
+            ? $"このワークフローには実行履歴が {historyCount} 件あります。過去の履歴もまとめて削除されます。\nこの操作は元に戻せません。"
+            : "この操作は元に戻せません。";
+        deleteWorkflowModalOpen = true;
+    }
+
+    private async Task ConfirmDeleteWorkflowAsync()
+    {
+        if (pendingDeleteWorkflowId is not int workflowId)
+        {
+            CancelDeleteWorkflow();
+            return;
+        }
+
+        deleteWorkflowProcessing = true;
+        try
+        {
+            await DeleteWorkflowAsync(workflowId);
+        }
+        finally
+        {
+            deleteWorkflowProcessing = false;
+            CancelDeleteWorkflow();
+        }
+    }
+
+    private void CancelDeleteWorkflow()
+    {
+        deleteWorkflowModalOpen = false;
+        pendingDeleteWorkflowId = null;
+        deleteWorkflowMessage = "ワークフローを削除しますか。";
+        deleteWorkflowDetail = null;
+    }
+
+    private async Task DeleteWorkflowAsync(int workflowId)
+    {
+        Logger.LogWarning(
+            "ワークフロー削除を開始しました。WorkflowId={WorkflowId}",
+            workflowId);
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var workflow = await db.JobFlows
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.Id == workflowId);
+            if (workflow is null)
+            {
+                Logger.LogWarning(
+                    "ワークフロー削除を中断しました。WorkflowId={WorkflowId}, Reason={Reason}",
+                    workflowId,
+                    "対象なし");
+                ShowMessage("ワークフローが見つかりません。", true);
+                await LoadAsync();
+                return;
+            }
+
+            var activeRunCount = await db.FlowRuns.CountAsync(item =>
+                item.JobFlowId == workflowId &&
+                (item.Status == ExecutionStatus.Queued || item.Status == ExecutionStatus.Running));
+            if (activeRunCount > 0)
+            {
+                Logger.LogWarning(
+                    "ワークフロー削除を中断しました。WorkflowId={WorkflowId}, ActiveRunCount={ActiveRunCount}",
+                    workflowId,
+                    activeRunCount);
+                ShowMessage("実行中または待機中のワークフローは削除できません。完了後に削除してください。", true);
+                return;
+            }
+
+            var historyCount = await db.FlowRuns.CountAsync(item => item.JobFlowId == workflowId);
+            var definitionIds = await db.JobNodes
+                .Where(item => item.JobFlowId == workflowId)
+                .Select(item => item.JobDefinitionId)
+                .Distinct()
+                .ToListAsync();
+
+            await using var transaction = await db.Database.BeginTransactionAsync();
+
+            await db.JobRuns
+                .Where(item => db.FlowRuns
+                    .Where(run => run.JobFlowId == workflowId)
+                    .Select(run => run.Id)
+                    .Contains(item.FlowRunId))
+                .ExecuteDeleteAsync();
+            await db.FlowRuns
+                .Where(item => item.JobFlowId == workflowId)
+                .ExecuteDeleteAsync();
+            await db.JobNodes
+                .Where(item => item.JobFlowId == workflowId)
+                .ExecuteDeleteAsync();
+            await db.JobFlows
+                .Where(item => item.Id == workflowId)
+                .ExecuteDeleteAsync();
+
+            if (definitionIds.Count > 0)
+            {
+                await db.JobDefinitions
+                    .Where(definition => definitionIds.Contains(definition.Id) &&
+                        !db.JobNodes.Any(node => node.JobDefinitionId == definition.Id))
+                    .ExecuteDeleteAsync();
+            }
+
+            await transaction.CommitAsync();
+
+            Logger.LogWarning(
+                "ワークフローを削除しました。WorkflowId={WorkflowId}, WorkflowName={WorkflowName}, HistoryCount={HistoryCount}, DefinitionCount={DefinitionCount}",
+                workflowId,
+                workflow.Name,
+                historyCount,
+                definitionIds.Count);
+
+            ShowMessage(historyCount > 0
+                ? $"ワークフローと実行履歴 {historyCount} 件を削除しました。"
+                : "ワークフローを削除しました。");
+            await LoadAsync();
+        }
+        catch (DbUpdateException exception)
+        {
+            Logger.LogError(
+                exception,
+                "ワークフロー削除に失敗しました。WorkflowId={WorkflowId}",
+                workflowId);
+            ShowMessage("ワークフローを削除できませんでした。関連データの状態を確認してください。", true);
+        }
+    }
+
+    private async Task<bool> CurrentUserIsAdministratorAsync()
+    {
+        var authenticationState = await AuthStateProvider.GetAuthenticationStateAsync();
+        return authenticationState.User.IsInRole(AppRoles.Administrator);
+    }
+
+    private string Format(DateTimeOffset? date) => date is null ? "-" : Format(date.Value);
+
+    private string Format(DateTimeOffset date) =>
+        TimeZoneInfo.ConvertTime(date, AppTimeZone).ToString("yyyy/MM/dd HH:mm:ss");
+
+    private TimeZoneInfo ResolveAppTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(SetupConfiguration.Current?.TimeZoneId ?? TimeZoneInfo.Local.Id);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.Local;
+        }
+        catch (InvalidTimeZoneException)
+        {
+            return TimeZoneInfo.Local;
+        }
+    }
+
+    private static string ScheduleText(JobFlow workflow) =>
+        workflow.ScheduleEnabled ? ScheduleTypeText(workflow.ScheduleType) : "未設定";
+
+    private static string ScheduleTypeText(ScheduleType type) => type switch
+    {
+        ScheduleType.Once => "一回のみ",
+        ScheduleType.Daily => "毎日",
+        ScheduleType.Weekly => "毎週",
+        ScheduleType.Monthly => "毎月",
+        ScheduleType.IntervalMinutes => "一定間隔",
+        _ => type.ToString()
+    };
+
+    private static WorkflowDraft CreateWorkflowDraft() => new();
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException exception) =>
+        exception.InnerException is Microsoft.Data.SqlClient.SqlException sqlException &&
+        sqlException.Number is 2601 or 2627;
+
+    private void ShowMessage(string text, bool error = false)
+    {
+        message = text;
+        isError = error;
+    }
+
+    private sealed class WorkflowDraft
+    {
+        [Required(ErrorMessage = "ワークフロー名を入力してください。")]
+        [StringLength(100, ErrorMessage = "ワークフロー名は {1} 文字以内で入力してください。")]
+        public string Name { get; set; } = string.Empty;
+
+        [StringLength(500, ErrorMessage = "説明は {1} 文字以内で入力してください。")]
+        public string? Description { get; set; }
+
+    }
+}

@@ -1,0 +1,51 @@
+@* 作業ディレクトリの意味を、タスク登録画面から確認できるようにする説明モーダルです。 *@
+@if (IsOpen)
+{
+    <div class="modal fade show d-block" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="@titleId">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h1 class="modal-title fs-5" id="@titleId">作業ディレクトリとは</h1>
+                    <button type="button" class="btn-close" aria-label="閉じる" @onclick="CloseAsync"></button>
+                </div>
+                <div class="modal-body">
+                    <p>
+                        作業ディレクトリとは、実行された exe や bat が動くときの「現在のフォルダ」です。
+                        実行ファイルを探すための場所ではありません。
+                    </p>
+                    <p>
+                        実行ファイルをフルパスで指定している場合、実行ファイルそのものを起動するためには作業ディレクトリは不要です。
+                        通常は空欄のままで問題ありません。
+                    </p>
+                    <p>
+                        ただし、bat や exe の中で相対パスを使っている場合は意味があります。
+                        例えば <code>copy input.txt output.txt</code> のような処理では、
+                        <code>input.txt</code> をどのフォルダから探すかが作業ディレクトリによって決まります。
+                    </p>
+                    <p>
+                        exe の内部で、相対パスの設定ファイル、入力ファイル、出力ファイル、ログファイルを扱っている場合も、
+                        作業ディレクトリを指定することで基準フォルダを明確にできます。
+                    </p>
+                    <div class="alert alert-info mb-0">
+                        空欄の場合は、実行ファイルのフォルダを自動で使用します。
+                        実行ファイル名だけを指定した場合は、アプリケーションの実行フォルダを使用します。
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" @onclick="CloseAsync">閉じる</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private readonly string titleId = $"working-directory-help-{Guid.NewGuid():N}";
+
+    [Parameter] public bool IsOpen { get; set; }
+
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private Task CloseAsync() => OnClose.InvokeAsync();
+}
